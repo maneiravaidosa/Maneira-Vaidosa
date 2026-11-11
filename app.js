@@ -354,7 +354,6 @@ function paginaProduto(ref) {
       <div class="product__media">
         <div class="stage shoe-frame" id="stage">
           <div class="stage__ring" aria-hidden="true"></div>
-          <span class="stage__num" aria-hidden="true">${esc(p.ref)}</span>
           ${htmlImagem(p, p.corInicial, "stage__img", false)}
           <span class="stage__missing">Foto brevemente</span>
         </div>
