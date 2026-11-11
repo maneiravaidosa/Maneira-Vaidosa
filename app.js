@@ -367,7 +367,7 @@ function paginaProduto(ref) {
           <div><dt>Categoria</dt><dd>${esc(p.categoria)}</dd></div>
           <div><dt>Numeração</dt><dd>${esc(p.numeracao)}</dd></div>
         </dl>
-        <div class="block">
+        <div class="block block--cores">
           <div class="block__label">Cor <span id="corNome">${esc(p.corInicial)}</span></div>
           <div class="dots" id="dots">${htmlDots(p, p.corInicial, true)}</div>
         </div>
@@ -494,15 +494,28 @@ function ativarProduto(ref) {
   }
 }
 
-// Nos cartões: passar o rato numa bolinha pré-visualiza essa cor
+// Nos cartões: clicar (ou tocar) numa bolinha muda a cor sem abrir a página do modelo;
+// no computador, passar o rato por cima também pré-visualiza. Ao abrir o modelo, abre nessa cor.
 function ativarCards() {
   document.querySelectorAll(".card").forEach((card) => {
     const img = $(".shoe", card);
-    card.addEventListener("pointerover", (e) => {
-      const d = e.target.closest(".dot");
-      if (!d || d.classList.contains("is-active")) return;
+    const p = estado.produtos.find((x) => x.ref === card.dataset.ref);
+    const escolher = (d) => {
+      if (d.classList.contains("is-active")) return;
       card.querySelectorAll(".dot").forEach((x) => x.classList.toggle("is-active", x === d));
       trocarFoto(img, card.dataset.ref, d.dataset.cor);
+      if (p) p.corInicial = d.dataset.cor;
+    };
+    card.addEventListener("pointerover", (e) => {
+      const d = e.target.closest(".dot");
+      if (d && e.pointerType === "mouse") escolher(d);
+    });
+    card.addEventListener("click", (e) => {
+      const d = e.target.closest(".dot");
+      if (!d) return;
+      e.preventDefault();
+      e.stopPropagation();
+      escolher(d);
     });
   });
 }
