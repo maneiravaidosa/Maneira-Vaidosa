@@ -3,27 +3,77 @@
 Site estático (HTML + CSS + JavaScript, sem instalação) que funciona em computador e telemóvel.
 O site lê **diretamente** o Excel `verao2027.xlsx` e as fotos da pasta `png/` — não é preciso mexer no código para acrescentar modelos.
 
-## Como acrescentar modelos
+## Quando tiver fotos novas (passo a passo)
 
-1. Acrescente linhas ao `verao2027.xlsx` (mesmas colunas: Referência, Fornecedor, Numeração, Cor, Preço, Categoria).
-2. Ponha as fotos tiradas com a câmara na pasta `fotos originais/`, com o nome `<referência>_<cor>.jpg`
-   (ex.: `20_castanho.jpg`).
-3. Converta as fotos (só é preciso instalar uma vez):
+Abra o terminal na pasta do projeto (onde está o `index.html`) e siga estes passos.
 
-   ```bash
-   pip install "rembg[cpu]" pillow
-   ```
+### 0. Só da primeira vez: instalar o programa que tira o fundo às fotos
 
-   ```bash
-   python ferramentas/converter_fotos.py
-   ```
+```bash
+python3 -m pip install "rembg[cpu]" pillow
+```
 
-   O script tira o fundo, recorta o sapato e cria `png/<referência>/<referência> <cor>.png`
-   (foto grande) e `png/<referência>/mini/<referência> <cor>.webp` (miniatura leve para a grelha).
-   Só converte fotos novas ou alteradas; `--todas` volta a converter tudo.
-4. Faça commit/push. Ao recarregar a página, os modelos novos aparecem.
+### 1. Trazer a versão mais recente do GitHub
 
-Também pode pôr diretamente um PNG em `png/<referência>/<referência> <cor>.png` — o site usa-o mesmo sem miniatura.
+```bash
+git pull
+```
+
+### 2. Pôr as fotos na pasta `fotos originais`
+
+O nome de cada foto tem de ser **referência + `_` + cor**, por exemplo:
+
+| Foto | Aparece no site como |
+|---|---|
+| `20_castanho.jpg` | modelo 20, cor Castanho |
+| `2709_camel.jpg` | modelo 2709, cor Camel |
+
+- A cor tem de ser **igual à do Excel** (maiúsculas/minúsculas não importa; acentos sim).
+- Para **substituir** uma foto, basta pôr a nova com o mesmo nome por cima da antiga.
+
+### 3. Se for um modelo ou uma cor nova, acrescentar a linha no Excel
+
+No `verao2027.xlsx`, uma linha por cor: Referência, Fornecedor, Numeração, Cor, Preço, Categoria.
+
+### 4. Converter as fotos
+
+```bash
+python3 ferramentas/converter_fotos.py
+```
+
+- Só converte as fotos **novas ou alteradas** (as que já estavam feitas são ignoradas).
+- Demora cerca de 5 segundos por foto. Da primeira vez descarrega o modelo de recorte (~180 MB), por isso demora mais.
+- No fim aparece `Convertidas: X`. Cada foto dá origem a dois ficheiros na pasta `png/<referência>/`:
+  a foto grande (`.png`) e uma miniatura leve (`mini/....webp`) usada na página inicial.
+- Se uma foto ficar mal recortada, pode voltar a convertê-la sozinha:
+
+  ```bash
+  python3 ferramentas/converter_fotos.py 20_castanho.jpg
+  ```
+
+### 5. Ver o resultado no computador (opcional)
+
+```bash
+python3 -m http.server 8000
+```
+
+Abra http://localhost:8000 no browser. Para parar o servidor: `Ctrl + C`.
+
+### 6. Enviar para o GitHub
+
+```bash
+git add -A
+```
+
+```bash
+git commit -m "Fotos novas"
+```
+
+```bash
+git push
+```
+
+Quando o site estiver publicado, as fotos e os modelos novos aparecem ao recarregar a página.
 
 Notas:
 - Uma categoria nova (ex.: "Bota") cria automaticamente um novo filtro no menu.
