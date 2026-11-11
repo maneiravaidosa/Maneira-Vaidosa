@@ -84,8 +84,17 @@ Notas:
 
 ## Encomendas por WhatsApp
 
-O botão **Encomendar** (página de cada modelo) abre o WhatsApp com uma mensagem para o número de encomendas,
-já com a referência (`fornecedor-referência`), a categoria, a cor escolhida e o link da foto.
+As encomendas fazem-se pelo **carrinho** (ícone do saco, no topo):
+
+1. Na página de cada modelo, **Adicionar ao carrinho** abre a escolha de cores. Para cada cor escolhe-se
+   **Todos os números** (a numeração do Excel, ex.: 35-41, 1 par de cada número, com quantas séries quiser)
+   ou **Personalizado** (quantidade de cada número). O botão **Todas as cores · todos os números** escolhe tudo de uma vez.
+2. Na página do **Carrinho** vê-se tudo, pode alterar-se ou remover cada modelo, e escrever o nome/loja e notas.
+3. **Encomendar por WhatsApp** cria uma imagem da encomenda (foto de cada modelo com as cores e números)
+   e abre o WhatsApp para o número de encomendas com a encomenda completa já escrita.
+   O WhatsApp não deixa um site anexar ficheiros sozinho, por isso o cliente guarda/partilha a imagem e junta-a na conversa.
+
+O carrinho fica guardado no browser de cada cliente (não precisa de conta).
 O número está em `CONFIG.empresa.whatsappEncomendas` no início de `app.js` e não aparece no site.
 
 ## Formatos
