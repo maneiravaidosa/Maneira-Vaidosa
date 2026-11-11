@@ -471,17 +471,6 @@ main.is-entering > *:nth-child(2) { animation-delay: 0.06s; }
   animation: breathe 7s ease-in-out infinite;
 }
 @keyframes breathe { 50% { transform: scale(1.06); } }
-.stage__num {
-  position: absolute;
-  bottom: -0.18em; right: 0.05em;
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: clamp(120px, 20vw, 300px);
-  line-height: 1;
-  color: var(--sand-2);
-  z-index: -2;
-  user-select: none;
-}
 .stage__img {
   width: 84%;
   max-height: 80%;
