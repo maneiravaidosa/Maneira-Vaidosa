@@ -23,7 +23,7 @@ const CONFIG = {
 // Cor das bolinhas. Cores novas que não estejam aqui recebem um tom neutro automático.
 const CORES = {
   branco: "#ffffff",
-  platina: "linear-gradient(135deg,#f4f2ee 0%,#c9c5bd 45%,#efede8 60%,#b7b2a8 100%)",
+  platina: "linear-gradient(135deg,#f5e7b8 0%,#d4b15f 45%,#f1dc9c 62%,#b8913f 100%)", // tom dourado
   taupe: "#9a8a78",
   castanho: "#6e4a2e",
   camel: "#c39a6b",
@@ -291,7 +291,7 @@ function paginaInicio() {
         <span class="line"><span>Maneira</span></span>
         <span class="line"><em>Vaidosa</em></span>
       </h1>
-      <p class="hero__lead">Calçado de verão escolhido a dedo — chinelos, sandálias e socas para revenda, em tons de areia, camel e platina.</p>
+      <p class="hero__lead">Calçado para Verão 2027 já disponível!</p>
       <div class="hero__cta">
         <a href="#colecao" class="btn" data-scroll>Ver coleção</a>
         <a href="#/contactos" class="btn btn--ghost">Contactos</a>
