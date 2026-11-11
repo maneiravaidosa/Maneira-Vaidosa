@@ -15,6 +15,8 @@ const CONFIG = {
     nome: "Maneira Vaidosa",
     telefone: "256 812 118",
     morada: ["Travessa do Emigrante, Nº 120", "3700-475 Arrifana, Portugal"],
+    // Número que recebe as encomendas por WhatsApp (só é usado no botão "Encomendar", não aparece no site)
+    whatsappEncomendas: "351913452242",
   },
 };
 
@@ -81,8 +83,20 @@ function corSwatch(cor) {
   return `hsl(${20 + (h % 30)}, ${25 + (h % 20)}%, ${40 + (h % 30)}%)`;
 }
 
-function caminhoFoto(ref, cor, ext = "png") {
-  return `${CONFIG.pastaFotos}/${encodeURIComponent(ref)}/${encodeURIComponent(`${ref} ${cor.toLowerCase().trim()}`)}.${ext}`;
+// Mensagem de encomenda por WhatsApp com a referência, a cor e o link da foto do modelo
+function linkWhatsApp(p, cor) {
+  const foto = new URL(caminhoFoto(p.ref, cor), location.href).href;
+  const texto =
+    `Olá! Gostaria de encomendar o modelo ${p.codigo} (${p.categoria}), cor ${cor}.\n` +
+    `Foto: ${foto}`;
+  return `https://wa.me/${CONFIG.empresa.whatsappEncomendas}?text=${encodeURIComponent(texto)}`;
+}
+
+// formato "png" = foto grande · "mini" = miniatura leve (png/<ref>/mini/<ref> <cor>.webp) · "PNG" = extensão em maiúsculas
+function caminhoFoto(ref, cor, formato = "png") {
+  const nome = encodeURIComponent(`${ref} ${cor.toLowerCase().trim()}`);
+  const pasta = `${CONFIG.pastaFotos}/${encodeURIComponent(ref)}`;
+  return formato === "mini" ? `${pasta}/mini/${nome}.webp` : `${pasta}/${nome}.${formato}`;
 }
 
 /* ---------- dados ---------- */
@@ -150,10 +164,21 @@ async function carregarDados() {
 
 /* ---------- imagens com fallback ---------- */
 // Se a foto de uma cor não existir, tenta .PNG; depois tenta as outras cores; por fim mostra um marcador.
-function htmlImagem(p, cor, extraClass = "") {
+// Imagem com alternativas: se a miniatura não existir usa a foto grande; se a cor não tiver foto, tenta outra cor.
+function htmlImagem(p, cor, extraClass = "", mini = true) {
   const ordem = [cor, ...p.cores.filter((c) => c !== cor)];
-  return `<img class="shoe ${extraClass}" src="${caminhoFoto(p.ref, cor)}" alt="Modelo ${esc(p.codigo)} — ${esc(cor)}"
-    loading="lazy" decoding="async" data-ref="${esc(p.ref)}" data-ordem="${esc(ordem.join("|"))}" data-i="0" data-ext="png">`;
+  const formatos = mini ? "mini|png|PNG" : "png|PNG";
+  return `<img class="shoe ${extraClass}" src="${caminhoFoto(p.ref, cor, formatos.split("|")[0])}" alt="Modelo ${esc(p.codigo)} — ${esc(cor)}"
+    loading="lazy" decoding="async" data-ref="${esc(p.ref)}" data-ordem="${esc(ordem.join("|"))}" data-i="0"
+    data-formatos="${formatos}" data-f="0">`;
+}
+
+function trocarFoto(img, ref, cor) {
+  img.dataset.ordem = cor;
+  img.dataset.i = "0";
+  img.dataset.f = "0";
+  img.closest(".shoe-frame")?.classList.remove("is-missing");
+  img.src = caminhoFoto(ref, cor, img.dataset.formatos.split("|")[0]);
 }
 
 document.addEventListener(
@@ -162,19 +187,22 @@ document.addEventListener(
     const img = e.target;
     if (!(img instanceof HTMLImageElement) || !img.dataset.ordem) return;
     const ordem = img.dataset.ordem.split("|");
+    const formatos = img.dataset.formatos.split("|");
     let i = +img.dataset.i;
-    if (img.dataset.ext === "png") {
-      img.dataset.ext = "PNG";
-    } else if (img.dataset.fixa === "1" || i + 1 >= ordem.length) {
-      img.removeAttribute("data-ordem");
-      img.closest(".shoe-frame")?.classList.add("is-missing");
-      img.src = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-      return;
-    } else {
+    let f = +img.dataset.f + 1;
+    if (f >= formatos.length) {
+      // nenhum formato desta cor existe: passa para a cor seguinte (exceto na página do modelo)
+      if (img.dataset.fixa === "1" || i + 1 >= ordem.length) {
+        img.removeAttribute("data-ordem");
+        img.closest(".shoe-frame")?.classList.add("is-missing");
+        img.src = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+        return;
+      }
       img.dataset.i = ++i;
-      img.dataset.ext = "png";
+      f = 0;
     }
-    img.src = caminhoFoto(img.dataset.ref, ordem[i], img.dataset.ext);
+    img.dataset.f = f;
+    img.src = caminhoFoto(img.dataset.ref, ordem[i], formatos[f]);
   },
   true
 );
@@ -327,7 +355,7 @@ function paginaProduto(ref) {
         <div class="stage shoe-frame" id="stage">
           <div class="stage__ring" aria-hidden="true"></div>
           <span class="stage__num" aria-hidden="true">${esc(p.ref)}</span>
-          ${htmlImagem(p, p.corInicial, "stage__img")}
+          ${htmlImagem(p, p.corInicial, "stage__img", false)}
           <span class="stage__missing">Foto brevemente</span>
         </div>
       </div>
@@ -349,7 +377,10 @@ function paginaProduto(ref) {
           <div class="sizes">${tamanhos}</div>
         </div>
         <div class="product__actions">
-          <a class="btn" href="tel:+351256812118">Encomendar · ${esc(CONFIG.empresa.telefone)}</a>
+          <a class="btn btn--wa" id="encomendar" href="${linkWhatsApp(p, p.corInicial)}" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>
+            Encomendar
+          </a>
           <a class="btn btn--ghost" href="#/contactos">Contactos</a>
         </div>
         <div class="product__pager">
@@ -435,15 +466,13 @@ function ativarProduto(ref) {
       d.setAttribute("aria-pressed", d === b);
     });
     $("#corNome").textContent = cor;
+    $("#encomendar").href = linkWhatsApp(p, cor);
     stage.classList.remove("is-missing");
     img.classList.add("is-swapping");
     setTimeout(() => {
-      img.dataset.ordem = cor;
-      img.dataset.i = "0";
-      img.dataset.ext = "png";
       img.dataset.fixa = "1"; // na página do produto, a cor escolhida não troca por outra
       img.alt = `Modelo ${p.codigo} — ${cor}`;
-      img.src = caminhoFoto(p.ref, cor);
+      trocarFoto(img, p.ref, cor);
       const done = () => img.classList.remove("is-swapping");
       if (img.complete) requestAnimationFrame(done);
       else img.addEventListener("load", done, { once: true }), img.addEventListener("error", done, { once: true });
@@ -474,11 +503,7 @@ function ativarCards() {
       const d = e.target.closest(".dot");
       if (!d || d.classList.contains("is-active")) return;
       card.querySelectorAll(".dot").forEach((x) => x.classList.toggle("is-active", x === d));
-      card.querySelector(".shoe-frame").classList.remove("is-missing");
-      img.dataset.ordem = d.dataset.cor;
-      img.dataset.i = "0";
-      img.dataset.ext = "png";
-      img.src = caminhoFoto(card.dataset.ref, d.dataset.cor);
+      trocarFoto(img, card.dataset.ref, d.dataset.cor);
     });
   });
 }

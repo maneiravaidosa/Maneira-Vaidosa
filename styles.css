@@ -222,7 +222,7 @@ main.is-entering > *:nth-child(2) { animation-delay: 0.06s; }
   transition: box-shadow 0.4s;
   animation: pop 1.2s var(--ease) both;
 }
-.float .shoe-frame { width: 72%; background: inherit; animation: bob 6s ease-in-out infinite; } /* fundo herdado: o multiply funciona dentro do bloco animado */
+.float .shoe-frame { width: 80%; background: inherit; animation: bob 6s ease-in-out infinite; } /* fundo herdado: o multiply funciona dentro do bloco animado */
 .float:hover { box-shadow: 0 40px 70px -30px rgba(102, 75, 50, 0.55); }
 .float .shoe { width: 100%; mix-blend-mode: multiply; transition: transform 0.6s var(--ease); }
 .float:hover .shoe { transform: scale(1.12) rotate(-6deg); }
@@ -352,8 +352,8 @@ main.is-entering > *:nth-child(2) { animation-delay: 0.06s; }
 }
 .card:hover .card__media::before { transform: scale(1.05); opacity: 1; }
 .card .shoe {
-  width: 72%;
-  max-height: 72%;
+  width: 82%;
+  max-height: 70%;
   object-fit: contain;
   mix-blend-mode: multiply;
   transition: transform 0.8s var(--ease);
@@ -483,8 +483,8 @@ main.is-entering > *:nth-child(2) { animation-delay: 0.06s; }
   user-select: none;
 }
 .stage__img {
-  width: 66%;
-  max-height: 66%;
+  width: 84%;
+  max-height: 80%;
   object-fit: contain;
   mix-blend-mode: multiply;
   transition: opacity 0.25s ease, transform 0.5s var(--ease), filter 0.3s;
