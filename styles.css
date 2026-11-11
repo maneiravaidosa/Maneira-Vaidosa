@@ -633,6 +633,7 @@ html.sem-scroll { overflow: hidden; }
 .esc__cor.is-on .seg button.is-on:not([data-modo=""]) { background: var(--dark); color: var(--cream); }
 .esc__serie { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; font-size: 14px; color: var(--dark); }
 .esc__serie small { display: block; font-size: 12px; color: var(--muted); }
+.esc__serie + .esc__serie { padding-top: 12px; border-top: 1px dashed var(--line); }
 .esc__tams { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 8px; margin-top: 12px; }
 .tam {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
@@ -655,25 +656,17 @@ html.sem-scroll { overflow: hidden; }
 .step button:not(:disabled):hover { background: var(--dark); color: var(--cream); }
 .step button:disabled { opacity: 0.3; cursor: default; }
 .step b { min-width: 26px; text-align: center; font-size: 15px; color: var(--dark); font-variant-numeric: tabular-nums; }
-.esc__total { font-size: 13.5px; color: var(--muted); }
+.esc__total { font-size: 13.5px; color: var(--muted); white-space: nowrap; }
+.painel__rodape .btn { white-space: nowrap; }
 .esc__total b { margin-right: 3px; font-family: var(--serif); font-size: 32px; font-weight: 400; color: var(--dark); }
 
 /* enviar encomenda */
 .enc__preview { max-height: 36vh; overflow-y: auto; margin-bottom: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--sand); }
 .enc__preview img { width: 100%; }
-.enc__passos { list-style: none; counter-reset: passo; margin: 0; padding: 0; display: grid; gap: 18px; }
-.enc__passos li { counter-increment: passo; display: grid; grid-template-columns: 34px 1fr; column-gap: 14px; align-items: start; }
-.enc__passos li::before {
-  content: counter(passo);
-  grid-row: span 3;
-  width: 34px; height: 34px;
-  display: grid; place-items: center;
-  border-radius: 50%; background: var(--dark); color: var(--cream);
-  font-family: var(--serif); font-size: 19px;
-}
-.enc__passos b { color: var(--dark); font-size: 15px; }
-.enc__passos p { margin: 2px 0 10px; font-size: 13.5px; color: var(--muted); }
-.enc__passos .btn { justify-self: start; }
+.enc__ajuda { margin: 0 0 16px; font-size: 14px; color: var(--muted); }
+.enc__ajuda b { color: var(--dark); }
+.enc__acoes { display: flex; flex-wrap: wrap; gap: 10px; }
+.enc__acoes .btn { flex: 1 1 200px; }
 .enc__nota { margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
 
 /* aviso */
@@ -884,7 +877,8 @@ html.sem-scroll { overflow: hidden; }
   .painel__corpo { padding: 14px 18px 18px; }
   .painel__rodape { padding-left: 18px; padding-right: 18px; }
   .painel__titulo { font-size: 38px; }
-  .painel__rodape .btn { padding: 14px 20px; }
+  .painel__rodape .btn { padding: 14px 22px; }
+  .so-largo { display: none; }
 }
 
 @media (max-width: 380px) {

@@ -87,15 +87,21 @@ Notas:
 As encomendas fazem-se pelo **carrinho** (ícone do saco, no topo):
 
 1. Na página de cada modelo, **Adicionar ao carrinho** abre a escolha de cores. Para cada cor escolhe-se
-   **Todos os números** (a numeração do Excel, ex.: 35-41, 1 par de cada número, com quantas séries quiser)
-   ou **Personalizado** (quantidade de cada número). O botão **Todas as cores · todos os números** escolhe tudo de uma vez.
+   **Séries** (as numerações das colunas `Numeração` e `Numeração 2` do Excel, ex.: 35-40 e 36-41, com quantas de cada)
+   ou **Personalizado** (quantidade de cada número, começa tudo a 0).
+   Os botões **Todas as cores · série …** escolhem todas as cores de uma vez.
 2. Na página do **Carrinho** vê-se tudo, pode alterar-se ou remover cada modelo, e escrever o nome/loja e notas.
-3. **Encomendar por WhatsApp** cria uma imagem da encomenda (foto de cada modelo com as cores e números)
-   e abre o WhatsApp para o número de encomendas com a encomenda completa já escrita.
-   O WhatsApp não deixa um site anexar ficheiros sozinho, por isso o cliente guarda/partilha a imagem e junta-a na conversa.
+3. **Enviar encomenda** cria uma imagem da encomenda (foto de cada modelo com as cores e números).
+   No telemóvel, **Enviar** abre a partilha do telemóvel com a imagem já anexada: o cliente escolhe o WhatsApp
+   e a conversa da Maneira Vaidosa. Onde a partilha não existe (alguns computadores), descarrega-se a imagem.
 
 O carrinho fica guardado no browser de cada cliente (não precisa de conta).
-O número está em `CONFIG.empresa.whatsappEncomendas` no início de `app.js` e não aparece no site.
+
+### Quantos pares tem uma série
+
+Está em `CONFIG.curvas` no início de `app.js`, conforme o número de tamanhos da série:
+séries de 6 números (35-40, 36-41) levam **1 · 2 · 3 · 3 · 2 · 1** pares (12 pares).
+Ex.: 35-40 = 35×1, 36×2, 37×3, 38×3, 39×2, 40×1. Séries com outro número de tamanhos levam 1 par de cada número.
 
 ## Formatos
 

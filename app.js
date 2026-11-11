@@ -11,12 +11,16 @@ const CONFIG = {
   ficheiros: ["verao2027.xlsx"],
   colecao: "Verão 2027",
   pastaFotos: "png",
+  // Quantos pares de cada número leva uma série, conforme o número de tamanhos da série.
+  // Ex.: série 35-40 (6 números) → 35×1, 36×2, 37×3, 38×3, 39×2, 40×1 = 12 pares.
+  // Séries com outro número de tamanhos que não esteja aqui levam 1 par de cada número.
+  curvas: {
+    6: [1, 2, 3, 3, 2, 1],
+  },
   empresa: {
     nome: "Maneira Vaidosa",
     telefone: "256 812 118",
     morada: ["Travessa do Emigrante, Nº 120", "3700-475 Arrifana, Portugal"],
-    // Número que recebe as encomendas por WhatsApp (só é usado na página do carrinho, não aparece no site)
-    whatsappEncomendas: "351913452242",
   },
 };
 
@@ -97,7 +101,7 @@ const estado = {
 };
 
 function normalizarCabecalho(h) {
-  return semAcentos(h).toLowerCase().replace(/[^a-z]/g, "");
+  return semAcentos(h).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 async function carregarExcel(ficheiro) {
@@ -113,6 +117,7 @@ async function carregarExcel(ficheiro) {
       ref: o.referencia != null ? String(o.referencia).trim() : "",
       fornecedor: o.fornecedor != null && String(o.fornecedor).trim() !== "" ? String(o.fornecedor).trim() : "0",
       numeracao: o.numeracao != null ? String(o.numeracao).trim() : "",
+      numeracao2: o.numeracao2 != null ? String(o.numeracao2).trim() : "",
       cor: o.cor != null ? capitalizar(String(o.cor).trim()) : "",
       preco: lerPreco(o.preco),
       categoria: o.categoria != null ? capitalizar(String(o.categoria).trim()) : "Outros",
@@ -136,12 +141,18 @@ async function carregarDados() {
         categoria: l.categoria,
         catSlug: slug(l.categoria),
         cores: [],
+        series: [], // ex.: ["35-40", "36-41"] (colunas Numeração e Numeração 2)
       };
       mapa.set(l.ref, p);
     }
+    for (const sr of [l.numeracao, l.numeracao2]) if (sr && !p.series.includes(sr)) p.series.push(sr);
     if (l.cor && !p.cores.includes(l.cor)) p.cores.push(l.cor);
   }
   estado.produtos = [...mapa.values()].filter((p) => p.cores.length);
+  for (const p of estado.produtos) {
+    if (!p.series.length) p.series.push(p.numeracao || "Único");
+    p.numeracao = p.series.join(" · ");
+  }
   for (const p of estado.produtos) p.corInicial = aleatorio(p.cores); // muda a cada refresh
 
   const cats = new Map();
@@ -328,13 +339,7 @@ function paginaProduto(ref) {
   const seg = estado.produtos[(idx + 1) % estado.produtos.length];
   const semelhantes = baralhar(estado.produtos.filter((x) => x.catSlug === p.catSlug && x !== p)).slice(0, 4);
 
-  const tamanhos = (() => {
-    const m = p.numeracao.match(/^(\d+)\s*[-–a]\s*(\d+)$/);
-    if (!m) return `<span class="size">${esc(p.numeracao || "—")}</span>`;
-    const out = [];
-    for (let n = +m[1]; n <= +m[2]; n++) out.push(`<span class="size">${n}</span>`);
-    return out.join("");
-  })();
+  const tamanhos = tamanhosDe(p).map((n) => `<span class="size">${esc(n)}</span>`).join("");
 
   return `
   <section class="product" data-ref="${esc(p.ref)}">
@@ -540,29 +545,47 @@ function ativarHero() {
 
 /* ---------- carrinho ---------- */
 // Fica guardado no próprio browser de quem encomenda (não precisa de conta). Formato:
-// { itens: { "<ref>": { "<Cor>": { serie: 2 } | { pares: { "35": 2, "37": 1 } } } }, nome, notas }
-//   serie = quantas vezes leva "todos os números" (ex: 35-41 → 1 par de cada número)
-//   pares = números personalizados, com a quantidade de cada número
+// { itens: { "<ref>": { "<Cor>": { series: { "35-40": 1, "36-41": 2 } } | { pares: { "35": 2, "37": 1 } } } }, nome, notas }
+//   series = quantas séries de cada numeração (ver CONFIG.curvas)
+//   pares  = números personalizados, com a quantidade de cada número
 const CHAVE_CARRINHO = "mv-carrinho";
 const produtoPorRef = (ref) => estado.produtos.find((p) => p.ref === ref);
 
-function tamanhosDe(p) {
-  const m = String(p.numeracao).match(/^(\d+)\s*[-–a]\s*(\d+)$/);
-  if (!m) return [p.numeracao || "Único"];
+function intervalo(serie) {
+  const m = String(serie).match(/^(\d+)\s*[-–a]\s*(\d+)$/);
+  if (!m) return [String(serie)];
   const out = [];
   for (let n = +m[1]; n <= +m[2]; n++) out.push(String(n));
   return out;
 }
 
+// [["35",1],["36",2],["37",3],["38",3],["39",2],["40",1]]
+function curvaSerie(serie) {
+  const t = intervalo(serie);
+  const c = CONFIG.curvas[t.length] || [];
+  return t.map((n, i) => [n, c[i] ?? 1]);
+}
+const paresSerie = (serie) => curvaSerie(serie).reduce((a, [, q]) => a + q, 0);
+
+// todos os números das séries do modelo (ex.: 35-40 e 36-41 → 35 a 41)
+function tamanhosDe(p) {
+  const todos = [...new Set(p.series.flatMap(intervalo))];
+  return todos.sort((a, b) => (isNaN(a) || isNaN(b) ? 0 : a - b));
+}
+
 function paresLinha(p, l) {
   if (!l) return 0;
-  if (l.serie) return l.serie * tamanhosDe(p).length;
+  if (l.series) return Object.entries(l.series).reduce((a, [sr, n]) => a + (+n || 0) * paresSerie(sr), 0);
   return Object.values(l.pares || {}).reduce((a, b) => a + (+b || 0), 0);
 }
 
-// "Todos os números (35-41)" · "Todos os números (35-41) × 2" · "35×2 · 36×3"
+// "Série 35-40" · "Série 36-41 × 2" · "35×2 · 36×3"
 function descreverLinha(p, l, sep = " · ") {
-  if (l.serie) return `Todos os números (${p.numeracao})${l.serie > 1 ? ` × ${l.serie}` : ""}`;
+  if (l.series)
+    return p.series
+      .filter((sr) => l.series[sr] > 0)
+      .map((sr) => `Série ${sr}${l.series[sr] > 1 ? ` × ${l.series[sr]}` : ""}`)
+      .join(sep);
   return tamanhosDe(p)
     .filter((t) => l.pares?.[t] > 0)
     .map((t) => `${t}×${l.pares[t]}`)
@@ -584,7 +607,11 @@ const carrinho = {
         const p = produtoPorRef(ref);
         if (!p) continue;
         const ok = {};
-        for (const [cor, l] of Object.entries(cores || {})) if (p.cores.includes(cor) && paresLinha(p, l) > 0) ok[cor] = l;
+        for (let [cor, l] of Object.entries(cores || {})) {
+          if (l?.serie) l = { series: { [p.series[0]]: l.serie } }; // formato antigo
+          if (l?.series) l = { series: Object.fromEntries(Object.entries(l.series).filter(([sr]) => p.series.includes(sr))) };
+          if (p.cores.includes(cor) && paresLinha(p, l) > 0) ok[cor] = l;
+        }
         if (Object.keys(ok).length) this.itens[ref] = ok;
       }
     } catch {
@@ -639,6 +666,7 @@ function atualizarContador(bump = false) {
 /* ---------- painéis (janela no computador, folha que sobe no telemóvel) ---------- */
 function abrirPainel(html, classe = "") {
   fecharPainel();
+  $(".toast")?.remove();
   const el = document.createElement("div");
   el.className = `painel ${classe}`;
   el.innerHTML = `<div class="painel__fundo" data-fechar></div><div class="painel__caixa" role="dialog" aria-modal="true">${html}</div>`;
@@ -680,12 +708,13 @@ function abrirEscolha(p, corDestaque) {
   const tams = tamanhosDe(p);
   const jaNoCarrinho = !!carrinho.itens[p.ref];
   const sel = JSON.parse(JSON.stringify(carrinho.itens[p.ref] || {}));
-  // primeira vez: a cor que está a ser vista já vem escolhida em "todos os números"
-  if (!jaNoCarrinho && corDestaque) sel[corDestaque] = { serie: 1 };
+  const novaSerie = (sr = p.series[0]) => ({ series: { [sr]: 1 } });
+  // primeira vez: a cor que está a ser vista já vem escolhida com a primeira série
+  if (!jaNoCarrinho && corDestaque) sel[corDestaque] = novaSerie();
 
   const htmlCor = (cor) => {
     const l = sel[cor];
-    const modo = l ? (l.serie ? "serie" : "pares") : "";
+    const modo = l ? (l.series ? "serie" : "pares") : "";
     const n = paresLinha(p, l);
     return `<div class="esc__cor ${n ? "is-on" : ""}" data-cor="${esc(cor)}">
       <div class="esc__top">
@@ -695,12 +724,21 @@ function abrirEscolha(p, corDestaque) {
       </div>
       <div class="seg" role="group" aria-label="Números para a cor ${esc(cor)}">
         <button type="button" data-modo="" class="${modo === "" ? "is-on" : ""}">Nenhum</button>
-        <button type="button" data-modo="serie" class="${modo === "serie" ? "is-on" : ""}">Todos os números</button>
+        <button type="button" data-modo="serie" class="${modo === "serie" ? "is-on" : ""}">${p.series.length > 1 ? "Séries" : "Série"}</button>
         <button type="button" data-modo="pares" class="${modo === "pares" ? "is-on" : ""}">Personalizado</button>
       </div>
       ${
         modo === "serie"
-          ? `<div class="esc__serie"><span>Séries ${esc(p.numeracao)} <small>(1 par de cada número)</small></span>${htmlPassos("serie", l.serie, 1)}</div>`
+          ? p.series
+              .map((sr) => {
+                const curva = curvaSerie(sr);
+                const q = l.series[sr] || 0;
+                return `<div class="esc__serie ${q ? "is-on" : ""}">
+                  <span>Série ${esc(sr)} <small>${paresSerie(sr)} pares: ${curva.map(([t, c]) => `${t}×${c}`).join(" ")}</small></span>
+                  ${htmlPassos("s:" + sr, q)}
+                </div>`;
+              })
+              .join("")
           : ""
       }
       ${
@@ -723,7 +761,9 @@ function abrirEscolha(p, corDestaque) {
     </header>
     <div class="painel__corpo">
       <div class="esc__rapido">
-        <button type="button" class="chip chip--btn" data-todas>Todas as cores · todos os números</button>
+        ${p.series
+          .map((sr) => `<button type="button" class="chip chip--btn" data-todas="${esc(sr)}">Todas as cores · série ${esc(sr)}</button>`)
+          .join("")}
         <button type="button" class="chip chip--btn" data-limpar>Limpar</button>
       </div>
       <div class="esc__lista">${p.cores.map(htmlCor).join("")}</div>
@@ -752,7 +792,8 @@ function abrirEscolha(p, corDestaque) {
       : `Escolhe pelo menos uma cor`;
     const ok = $("#escOk");
     ok.disabled = !pares && !jaNoCarrinho;
-    ok.textContent = !pares && jaNoCarrinho ? "Tirar do carrinho" : jaNoCarrinho ? "Atualizar carrinho" : "Adicionar ao carrinho";
+    const resto = '<span class="so-largo"> carrinho</span>';
+    ok.innerHTML = !pares && jaNoCarrinho ? "Tirar do carrinho" : jaNoCarrinho ? `Atualizar${resto}` : `Adicionar<span class="so-largo"> ao carrinho</span>`;
   };
   resumo();
 
@@ -765,24 +806,23 @@ function abrirEscolha(p, corDestaque) {
       const modo = modoBtn.dataset.modo;
       const antes = sel[cor];
       if (modo === "") delete sel[cor];
-      else if (modo === "serie") sel[cor] = { serie: antes?.serie || 1 };
-      else {
-        // passar de "todos os números" para personalizado mantém as quantidades
-        const base = antes?.serie || 0;
-        sel[cor] = antes?.pares ? antes : { pares: Object.fromEntries(tams.map((t) => [t, base])) };
-      }
+      else if (modo === "serie") sel[cor] = antes?.series ? antes : novaSerie();
+      else sel[cor] = antes?.pares ? antes : { pares: Object.fromEntries(tams.map((t) => [t, 0])) }; // começa tudo a 0
       redesenhar(cor);
     } else if (passo && cor) {
       const d = +passo.dataset.d;
       const k = passo.dataset.k;
-      if (k === "serie") sel[cor].serie = Math.max(1, sel[cor].serie + d);
-      else {
+      if (k.startsWith("s:")) {
+        const sr = k.slice(2);
+        sel[cor].series[sr] = Math.max(0, (sel[cor].series[sr] || 0) + d);
+      } else {
         const t = k.slice(2);
         sel[cor].pares[t] = Math.max(0, (sel[cor].pares[t] || 0) + d);
       }
       redesenhar(cor);
     } else if (e.target.closest("[data-todas]")) {
-      for (const c of p.cores) if (!paresLinha(p, sel[c])) sel[c] = { serie: 1 };
+      const sr = e.target.closest("[data-todas]").dataset.todas;
+      for (const c of p.cores) if (!paresLinha(p, sel[c])) sel[c] = novaSerie(sr);
       p.cores.forEach(redesenhar);
     } else if (e.target.closest("[data-limpar]")) {
       for (const c of p.cores) delete sel[c];
@@ -793,7 +833,8 @@ function abrirEscolha(p, corDestaque) {
       for (const c of p.cores) {
         const l = sel[c];
         if (!paresLinha(p, l)) continue;
-        final[c] = l.serie ? { serie: l.serie } : { pares: Object.fromEntries(Object.entries(l.pares).filter(([, q]) => q > 0)) };
+        const soPositivos = (o) => Object.fromEntries(Object.entries(o).filter(([, q]) => q > 0));
+        final[c] = l.series ? { series: soPositivos(l.series) } : { pares: soPositivos(l.pares) };
       }
       carrinho.definir(p.ref, final);
       fecharPainel();
@@ -853,7 +894,7 @@ function htmlItemCarrinho(ref) {
   </article>`;
 }
 
-const ICONE_WA = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>`;
+const ICONE_ENVIAR = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" d="M21 3 10.5 13.5M21 3l-6.5 18-4-7.5L3 9.5 21 3Z"/></svg>`;
 
 function paginaCarrinho() {
   const refs = Object.keys(carrinho.itens);
@@ -881,7 +922,7 @@ function paginaCarrinho() {
       </dl>
       <label class="campo"><span>Nome / loja</span><input id="cartNome" autocomplete="organization" placeholder="Para sabermos de quem é a encomenda" value="${esc(carrinho.nome)}"></label>
       <label class="campo"><span>Notas <i>(opcional)</i></span><textarea id="cartNotas" rows="2" placeholder="Ex.: prazo de entrega, morada…">${esc(carrinho.notas)}</textarea></label>
-      <button type="button" class="btn btn--full" id="encomendar">${ICONE_WA}<span>Encomendar por WhatsApp</span></button>
+      <button type="button" class="btn btn--full" id="encomendar">${ICONE_ENVIAR}<span>Enviar encomenda</span></button>
       <button type="button" class="link-btn link-btn--muted" id="esvaziar">Esvaziar carrinho</button>
     </aside>
   </section>`;
@@ -917,27 +958,6 @@ function ativarCarrinho() {
 }
 
 /* ---------- enviar a encomenda ---------- */
-function textoEncomenda() {
-  const t = carrinho.totais();
-  const partes = [`Olá! Encomenda feita no site ${CONFIG.empresa.nome}:`];
-  if (carrinho.nome.trim()) partes.push(`Cliente: ${carrinho.nome.trim()}`);
-  for (const [ref, linhas] of Object.entries(carrinho.itens)) {
-    const p = produtoPorRef(ref);
-    partes.push(
-      "",
-      `*${p.codigo}* · ${p.categoria} · ${p.precoCodigo}`,
-      ...Object.entries(linhas).map(([cor, l]) => `• ${cor}: ${descreverLinha(p, l, ", ")} (${plur(paresLinha(p, l), "par", "pares")})`)
-    );
-  }
-  partes.push("", `*Total: ${plur(t.modelos, "modelo", "modelos")} · ${plur(t.pares, "par", "pares")}*`);
-  if (carrinho.notas.trim()) partes.push(`Notas: ${carrinho.notas.trim()}`);
-  return partes.join("\n");
-}
-
-function linkWhatsApp() {
-  return `https://wa.me/${CONFIG.empresa.whatsappEncomendas}?text=${encodeURIComponent(textoEncomenda())}`;
-}
-
 function carregarImagem(src) {
   return new Promise((ok) => {
     const im = new Image();
@@ -1162,7 +1182,7 @@ async function prepararEncomenda() {
     console.error(err);
   }
   btn.disabled = false;
-  txt.textContent = "Encomendar por WhatsApp";
+  txt.textContent = "Enviar encomenda";
 
   const data = new Date().toISOString().slice(0, 10);
   const nomeFicheiro = `encomenda-maneira-vaidosa-${data}.png`;
@@ -1170,45 +1190,47 @@ async function prepararEncomenda() {
   const url = blob ? URL.createObjectURL(blob) : "";
   const podePartilhar = !!(ficheiro && navigator.canShare?.({ files: [ficheiro] }));
 
+  if (!blob) {
+    alert("Não foi possível preparar a imagem da encomenda. Tenta outra vez.");
+    return;
+  }
   const painel = abrirPainel(
     `<header class="painel__topo">
       <div><p class="eyebrow">Enviar encomenda</p><h2 class="painel__titulo">Quase feito</h2></div>
       <button type="button" class="painel__x" data-fechar aria-label="Fechar">×</button>
     </header>
     <div class="painel__corpo">
-      ${blob ? `<div class="enc__preview"><img src="${url}" alt="Imagem da encomenda"></div>` : ""}
-      <ol class="enc__passos">
-        ${
-          blob
-            ? `<li><b>${podePartilhar ? "Envia a imagem" : "Guarda a imagem"}</b>
-                <p>${podePartilhar ? "Escolhe o WhatsApp e a conversa da Maneira Vaidosa." : "A imagem tem as fotos dos modelos e todas as quantidades."}</p>
-                <button type="button" class="btn btn--ghost" id="encImagem">${podePartilhar ? "Partilhar imagem" : "Descarregar imagem"}</button></li>`
-            : ""
-        }
-        <li><b>Abre o WhatsApp</b>
-          <p>A mensagem já vai escrita com a encomenda completa${blob ? " — junta-lhe a imagem e envia" : ""}.</p>
-          <a class="btn" id="encWa" href="${linkWhatsApp()}" target="_blank" rel="noopener">${ICONE_WA}Abrir WhatsApp</a></li>
-      </ol>
+      <div class="enc__preview"><img src="${url}" alt="Imagem da encomenda"></div>
+      <p class="enc__ajuda">${
+        podePartilhar
+          ? "Carrega em <b>Enviar</b>, escolhe o <b>WhatsApp</b> e a conversa da Maneira Vaidosa."
+          : "Descarrega a imagem e envia-a pelo WhatsApp para a Maneira Vaidosa."
+      }</p>
+      <div class="enc__acoes">
+        ${podePartilhar ? `<button type="button" class="btn" id="encEnviar">${ICONE_ENVIAR}Enviar</button>` : ""}
+        <button type="button" class="btn ${podePartilhar ? "btn--ghost" : ""}" id="encDescarregar">Descarregar imagem</button>
+      </div>
       <p class="enc__nota" id="encNota" hidden>Encomenda enviada? <button type="button" class="link-btn" id="encLimpar">Esvaziar o carrinho</button></p>
     </div>`,
     "painel--encomenda"
   );
+  const mostrarNota = () => ($("#encNota", painel).hidden = false);
 
-  $("#encImagem", painel)?.addEventListener("click", async () => {
-    if (podePartilhar) {
-      try {
-        await navigator.share({ files: [ficheiro], title: "Encomenda Maneira Vaidosa" });
-      } catch {}
-    } else {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = nomeFicheiro;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }
+  $("#encEnviar", painel)?.addEventListener("click", async () => {
+    try {
+      await navigator.share({ files: [ficheiro] });
+      mostrarNota();
+    } catch {}
   });
-  $("#encWa", painel).addEventListener("click", () => ($("#encNota", painel).hidden = false));
+  $("#encDescarregar", painel).addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nomeFicheiro;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    mostrarNota();
+  });
   $("#encLimpar", painel).addEventListener("click", () => {
     carrinho.esvaziar();
     fecharPainel();
@@ -1270,6 +1292,7 @@ function render() {
   if (r.nome === "carrinho") ativarCarrinho();
   $("#cartBtn")?.classList.toggle("is-active", r.nome === "carrinho");
   fecharPainel();
+  if (r.nome === "carrinho") $(".toast")?.remove();
   // centra o link ativo na barra de filtros (telemóvel)
   $("#nav .is-active")?.scrollIntoView({ block: "nearest", inline: "center" });
   ultimaRota = r;
