@@ -9,6 +9,7 @@ Uso (na pasta do projeto):
     pip install "rembg[cpu]" pillow
     python ferramentas/converter_fotos.py           # só converte fotos novas ou alteradas
     python ferramentas/converter_fotos.py --todas   # volta a converter tudo
+    python ferramentas/converter_fotos.py 20_castanho.jpg   # volta a converter só essa foto
 
 Da primeira vez, o rembg descarrega automaticamente o modelo de recorte (~180 MB).
 """
@@ -38,11 +39,20 @@ def nome_destino(ficheiro: Path):
 
 
 def recortar(img: Image.Image) -> Image.Image:
-    alpha = img.getchannel("A").point(lambda a: 255 if a > 12 else 0)
-    caixa = alpha.getbbox()
-    if not caixa:
+    # apaga restos quase transparentes do fundo
+    a = img.getchannel("A").point(lambda v: 0 if v < 40 else v)
+    img.putalpha(a)
+    # caixa do sapato: ignora linhas/colunas com apenas alguns píxeis soltos
+    solido = a.point(lambda v: 1 if v > 128 else 0)
+    w, h = solido.size
+    linhas = [sum(solido.crop((0, y, w, y + 1)).getdata()) for y in range(h)]
+    colunas = [sum(solido.crop((x, 0, x + 1, h)).getdata()) for x in range(w)]
+    minimo = 6
+    ys = [i for i, v in enumerate(linhas) if v >= minimo]
+    xs = [i for i, v in enumerate(colunas) if v >= minimo]
+    if not ys or not xs:
         return img
-    img = img.crop(caixa)
+    img = img.crop((xs[0], ys[0], xs[-1] + 1, ys[-1] + 1))
     w, h = img.size
     m = int(max(w, h) * MARGEM)
     tela = Image.new("RGBA", (w + 2 * m, h + 2 * m), (0, 0, 0, 0))
@@ -52,10 +62,15 @@ def recortar(img: Image.Image) -> Image.Image:
 
 def main():
     todas = "--todas" in sys.argv
+    # nomes de ficheiros específicos podem ser passados como argumentos (ex: 20_castanho.jpg)
+    escolhidas = {a for a in sys.argv[1:] if not a.startswith("--")}
     os.environ.setdefault("OMP_NUM_THREADS", "4")
     from rembg import new_session, remove
 
     ficheiros = sorted(f for f in ORIGEM.iterdir() if f.suffix.lower() in EXTENSOES)
+    if escolhidas:
+        ficheiros = [f for f in ficheiros if f.name in escolhidas]
+        todas = True
     sessao = None
     feitos = ignorados = 0
     for f in ficheiros:
