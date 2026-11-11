@@ -15,7 +15,7 @@ const CONFIG = {
     nome: "Maneira Vaidosa",
     telefone: "256 812 118",
     morada: ["Travessa do Emigrante, Nº 120", "3700-475 Arrifana, Portugal"],
-    // Número que recebe as encomendas por WhatsApp (só é usado no botão "Encomendar", não aparece no site)
+    // Número que recebe as encomendas por WhatsApp (só é usado na página do carrinho, não aparece no site)
     whatsappEncomendas: "351913452242",
   },
 };
@@ -81,15 +81,6 @@ function corSwatch(cor) {
   let h = 0;
   for (const ch of k) h = (h * 31 + ch.charCodeAt(0)) % 360;
   return `hsl(${20 + (h % 30)}, ${25 + (h % 20)}%, ${40 + (h % 30)}%)`;
-}
-
-// Mensagem de encomenda por WhatsApp com a referência, a cor e o link da foto do modelo
-function linkWhatsApp(p, cor) {
-  const foto = new URL(caminhoFoto(p.ref, cor), location.href).href;
-  const texto =
-    `Olá! Gostaria de encomendar o modelo ${p.codigo} (${p.categoria}), cor ${cor}.\n` +
-    `Foto: ${foto}`;
-  return `https://wa.me/${CONFIG.empresa.whatsappEncomendas}?text=${encodeURIComponent(texto)}`;
 }
 
 // formato "png" = foto grande · "mini" = miniatura leve (png/<ref>/mini/<ref> <cor>.webp) · "PNG" = extensão em maiúsculas
@@ -346,7 +337,7 @@ function paginaProduto(ref) {
   })();
 
   return `
-  <section class="product">
+  <section class="product" data-ref="${esc(p.ref)}">
     <div class="product__crumbs">
       <a href="#/">Coleção</a><span>/</span><a href="#/c/${p.catSlug}">${esc(plural(p.categoria))}</a><span>/</span><b>${esc(p.codigo)}</b>
     </div>
@@ -376,12 +367,13 @@ function paginaProduto(ref) {
           <div class="sizes">${tamanhos}</div>
         </div>
         <div class="product__actions">
-          <a class="btn btn--wa" id="encomendar" href="${linkWhatsApp(p, p.corInicial)}" target="_blank" rel="noopener">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>
-            Encomendar
-          </a>
+          <button type="button" class="btn" id="addCarrinho">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" d="M5 8h14l-1.2 12.2a1 1 0 0 1-1 .8H7.2a1 1 0 0 1-1-.8L5 8Z"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M9 10V7a3 3 0 0 1 6 0v3"/></svg>
+            <span id="addCarrinhoTxt">Adicionar ao carrinho</span>
+          </button>
           <a class="btn btn--ghost" href="#/contactos">Contactos</a>
         </div>
+        <p class="product__nocart" id="noCarrinho"></p>
         <div class="product__pager">
           <a href="#/p/${encodeURIComponent(ant.ref)}">← ${esc(ant.codigo)}</a>
           <a href="#/p/${encodeURIComponent(seg.ref)}">${esc(seg.codigo)} →</a>
@@ -465,7 +457,6 @@ function ativarProduto(ref) {
       d.setAttribute("aria-pressed", d === b);
     });
     $("#corNome").textContent = cor;
-    $("#encomendar").href = linkWhatsApp(p, cor);
     stage.classList.remove("is-missing");
     img.classList.add("is-swapping");
     setTimeout(() => {
@@ -477,6 +468,9 @@ function ativarProduto(ref) {
       else img.addEventListener("load", done, { once: true }), img.addEventListener("error", done, { once: true });
     }, 180);
   });
+
+  $("#addCarrinho").addEventListener("click", () => abrirEscolha(p, $("#dots .is-active")?.dataset.cor));
+  atualizarBotaoProduto(p);
 
   // efeito 3D suave ao passar o rato
   if (window.matchMedia("(hover: hover)").matches) {
@@ -544,6 +538,685 @@ function ativarHero() {
   tick();
 }
 
+/* ---------- carrinho ---------- */
+// Fica guardado no próprio browser de quem encomenda (não precisa de conta). Formato:
+// { itens: { "<ref>": { "<Cor>": { serie: 2 } | { pares: { "35": 2, "37": 1 } } } }, nome, notas }
+//   serie = quantas vezes leva "todos os números" (ex: 35-41 → 1 par de cada número)
+//   pares = números personalizados, com a quantidade de cada número
+const CHAVE_CARRINHO = "mv-carrinho";
+const produtoPorRef = (ref) => estado.produtos.find((p) => p.ref === ref);
+
+function tamanhosDe(p) {
+  const m = String(p.numeracao).match(/^(\d+)\s*[-–a]\s*(\d+)$/);
+  if (!m) return [p.numeracao || "Único"];
+  const out = [];
+  for (let n = +m[1]; n <= +m[2]; n++) out.push(String(n));
+  return out;
+}
+
+function paresLinha(p, l) {
+  if (!l) return 0;
+  if (l.serie) return l.serie * tamanhosDe(p).length;
+  return Object.values(l.pares || {}).reduce((a, b) => a + (+b || 0), 0);
+}
+
+// "Todos os números (35-41)" · "Todos os números (35-41) × 2" · "35×2 · 36×3"
+function descreverLinha(p, l, sep = " · ") {
+  if (l.serie) return `Todos os números (${p.numeracao})${l.serie > 1 ? ` × ${l.serie}` : ""}`;
+  return tamanhosDe(p)
+    .filter((t) => l.pares?.[t] > 0)
+    .map((t) => `${t}×${l.pares[t]}`)
+    .join(sep);
+}
+
+const carrinho = {
+  itens: {},
+  nome: "",
+  notas: "",
+  carregar() {
+    try {
+      const d = JSON.parse(localStorage.getItem(CHAVE_CARRINHO) || "{}");
+      this.nome = d.nome || "";
+      this.notas = d.notas || "";
+      this.itens = {};
+      // ignora modelos/cores que entretanto saíram do Excel
+      for (const [ref, cores] of Object.entries(d.itens || {})) {
+        const p = produtoPorRef(ref);
+        if (!p) continue;
+        const ok = {};
+        for (const [cor, l] of Object.entries(cores || {})) if (p.cores.includes(cor) && paresLinha(p, l) > 0) ok[cor] = l;
+        if (Object.keys(ok).length) this.itens[ref] = ok;
+      }
+    } catch {
+      this.itens = {};
+    }
+  },
+  guardar() {
+    try {
+      localStorage.setItem(CHAVE_CARRINHO, JSON.stringify({ itens: this.itens, nome: this.nome, notas: this.notas }));
+    } catch {}
+  },
+  // substitui as cores escolhidas para um modelo (vazio = tira o modelo do carrinho)
+  definir(ref, cores) {
+    if (Object.keys(cores).length) this.itens[ref] = cores;
+    else delete this.itens[ref];
+    this.guardar();
+    atualizarContador(true);
+  },
+  esvaziar() {
+    this.itens = {};
+    this.guardar();
+    atualizarContador();
+  },
+  totais() {
+    let modelos = 0, cores = 0, pares = 0;
+    for (const [ref, linhas] of Object.entries(this.itens)) {
+      const p = produtoPorRef(ref);
+      modelos++;
+      for (const l of Object.values(linhas)) (cores++, (pares += paresLinha(p, l)));
+    }
+    return { modelos, cores, pares };
+  },
+};
+
+const plur = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+
+function atualizarContador(bump = false) {
+  const n = Object.keys(carrinho.itens).length;
+  const el = $("#cartCount");
+  if (!el) return;
+  el.textContent = n;
+  el.hidden = n === 0;
+  $("#cartBtn").setAttribute("aria-label", `Carrinho (${plur(n, "modelo", "modelos")})`);
+  if (bump) {
+    const b = $("#cartBtn");
+    b.classList.remove("is-bump");
+    void b.offsetWidth;
+    b.classList.add("is-bump");
+  }
+}
+
+/* ---------- painéis (janela no computador, folha que sobe no telemóvel) ---------- */
+function abrirPainel(html, classe = "") {
+  fecharPainel();
+  const el = document.createElement("div");
+  el.className = `painel ${classe}`;
+  el.innerHTML = `<div class="painel__fundo" data-fechar></div><div class="painel__caixa" role="dialog" aria-modal="true">${html}</div>`;
+  document.body.appendChild(el);
+  document.documentElement.classList.add("sem-scroll");
+  el.addEventListener("click", (e) => e.target.closest("[data-fechar]") && fecharPainel());
+  requestAnimationFrame(() => el.classList.add("is-open"));
+  return el;
+}
+
+function fecharPainel() {
+  document.querySelectorAll(".painel").forEach((el) => el.remove());
+  document.documentElement.classList.remove("sem-scroll");
+}
+document.addEventListener("keydown", (e) => e.key === "Escape" && fecharPainel());
+
+function aviso(html) {
+  $(".toast")?.remove();
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.setAttribute("role", "status");
+  t.innerHTML = html;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("is-in"));
+  setTimeout(() => {
+    t.classList.remove("is-in");
+    setTimeout(() => t.remove(), 400);
+  }, 3200);
+}
+
+/* ---------- escolher cores e números ---------- */
+const htmlPassos = (k, n, min = 0) => `<span class="step">
+  <button type="button" data-k="${k}" data-d="-1" aria-label="Menos" ${n <= min ? "disabled" : ""}>−</button>
+  <b>${n}</b>
+  <button type="button" data-k="${k}" data-d="1" aria-label="Mais">+</button>
+</span>`;
+
+function abrirEscolha(p, corDestaque) {
+  const tams = tamanhosDe(p);
+  const jaNoCarrinho = !!carrinho.itens[p.ref];
+  const sel = JSON.parse(JSON.stringify(carrinho.itens[p.ref] || {}));
+  // primeira vez: a cor que está a ser vista já vem escolhida em "todos os números"
+  if (!jaNoCarrinho && corDestaque) sel[corDestaque] = { serie: 1 };
+
+  const htmlCor = (cor) => {
+    const l = sel[cor];
+    const modo = l ? (l.serie ? "serie" : "pares") : "";
+    const n = paresLinha(p, l);
+    return `<div class="esc__cor ${n ? "is-on" : ""}" data-cor="${esc(cor)}">
+      <div class="esc__top">
+        <span class="dot dot--md" style="--sw:${corSwatch(cor)}"></span>
+        <span class="esc__nome">${esc(cor)}</span>
+        <span class="esc__pares">${n ? plur(n, "par", "pares") : ""}</span>
+      </div>
+      <div class="seg" role="group" aria-label="Números para a cor ${esc(cor)}">
+        <button type="button" data-modo="" class="${modo === "" ? "is-on" : ""}">Nenhum</button>
+        <button type="button" data-modo="serie" class="${modo === "serie" ? "is-on" : ""}">Todos os números</button>
+        <button type="button" data-modo="pares" class="${modo === "pares" ? "is-on" : ""}">Personalizado</button>
+      </div>
+      ${
+        modo === "serie"
+          ? `<div class="esc__serie"><span>Séries ${esc(p.numeracao)} <small>(1 par de cada número)</small></span>${htmlPassos("serie", l.serie, 1)}</div>`
+          : ""
+      }
+      ${
+        modo === "pares"
+          ? `<div class="esc__tams">${tams
+              .map((t) => {
+                const q = l.pares[t] || 0;
+                return `<div class="tam ${q ? "is-on" : ""}"><span class="tam__n">${esc(t)}</span>${htmlPassos("t:" + t, q)}</div>`;
+              })
+              .join("")}</div>`
+          : ""
+      }
+    </div>`;
+  };
+
+  const painel = abrirPainel(
+    `<header class="painel__topo">
+      <div><p class="eyebrow">${esc(p.categoria)} · ${plur(p.cores.length, "cor", "cores")}</p><h2 class="painel__titulo">${esc(p.codigo)}</h2></div>
+      <button type="button" class="painel__x" data-fechar aria-label="Fechar">×</button>
+    </header>
+    <div class="painel__corpo">
+      <div class="esc__rapido">
+        <button type="button" class="chip chip--btn" data-todas>Todas as cores · todos os números</button>
+        <button type="button" class="chip chip--btn" data-limpar>Limpar</button>
+      </div>
+      <div class="esc__lista">${p.cores.map(htmlCor).join("")}</div>
+    </div>
+    <footer class="painel__rodape">
+      <div class="esc__total" id="escTotal"></div>
+      <button type="button" class="btn" id="escOk"></button>
+    </footer>`,
+    "painel--escolha"
+  );
+
+  const lista = $(".esc__lista", painel);
+  const redesenhar = (cor) => {
+    const row = lista.querySelector(`.esc__cor[data-cor="${CSS.escape(cor)}"]`);
+    row.outerHTML = htmlCor(cor);
+    resumo();
+  };
+  const resumo = () => {
+    let pares = 0, cores = 0;
+    for (const cor of p.cores) {
+      const n = paresLinha(p, sel[cor]);
+      if (n) (cores++, (pares += n));
+    }
+    $("#escTotal").innerHTML = pares
+      ? `<b>${pares}</b> ${pares === 1 ? "par" : "pares"} · ${plur(cores, "cor", "cores")}`
+      : `Escolhe pelo menos uma cor`;
+    const ok = $("#escOk");
+    ok.disabled = !pares && !jaNoCarrinho;
+    ok.textContent = !pares && jaNoCarrinho ? "Tirar do carrinho" : jaNoCarrinho ? "Atualizar carrinho" : "Adicionar ao carrinho";
+  };
+  resumo();
+
+  painel.addEventListener("click", (e) => {
+    const row = e.target.closest(".esc__cor");
+    const cor = row?.dataset.cor;
+    const modoBtn = e.target.closest("[data-modo]");
+    const passo = e.target.closest("[data-k]");
+    if (modoBtn && cor) {
+      const modo = modoBtn.dataset.modo;
+      const antes = sel[cor];
+      if (modo === "") delete sel[cor];
+      else if (modo === "serie") sel[cor] = { serie: antes?.serie || 1 };
+      else {
+        // passar de "todos os números" para personalizado mantém as quantidades
+        const base = antes?.serie || 0;
+        sel[cor] = antes?.pares ? antes : { pares: Object.fromEntries(tams.map((t) => [t, base])) };
+      }
+      redesenhar(cor);
+    } else if (passo && cor) {
+      const d = +passo.dataset.d;
+      const k = passo.dataset.k;
+      if (k === "serie") sel[cor].serie = Math.max(1, sel[cor].serie + d);
+      else {
+        const t = k.slice(2);
+        sel[cor].pares[t] = Math.max(0, (sel[cor].pares[t] || 0) + d);
+      }
+      redesenhar(cor);
+    } else if (e.target.closest("[data-todas]")) {
+      for (const c of p.cores) if (!paresLinha(p, sel[c])) sel[c] = { serie: 1 };
+      p.cores.forEach(redesenhar);
+    } else if (e.target.closest("[data-limpar]")) {
+      for (const c of p.cores) delete sel[c];
+      p.cores.forEach(redesenhar);
+    } else if (e.target.closest("#escOk")) {
+      // guarda pela ordem das cores do Excel e só as que têm pares
+      const final = {};
+      for (const c of p.cores) {
+        const l = sel[c];
+        if (!paresLinha(p, l)) continue;
+        final[c] = l.serie ? { serie: l.serie } : { pares: Object.fromEntries(Object.entries(l.pares).filter(([, q]) => q > 0)) };
+      }
+      carrinho.definir(p.ref, final);
+      fecharPainel();
+      aviso(
+        Object.keys(final).length
+          ? `<span>${esc(p.codigo)} no carrinho</span><a href="#/carrinho">Ver carrinho</a>`
+          : `<span>${esc(p.codigo)} saiu do carrinho</span>`
+      );
+      atualizarBotaoProduto(p);
+      redesenharCarrinho();
+    }
+  });
+}
+
+// Na página do modelo: diz o que já está no carrinho
+function atualizarBotaoProduto(p) {
+  const txt = $("#addCarrinhoTxt");
+  if (!txt || $("#stage")?.closest(".product")?.dataset.ref !== p.ref) return;
+  const linhas = carrinho.itens[p.ref];
+  txt.textContent = linhas ? "Alterar no carrinho" : "Adicionar ao carrinho";
+  const n = linhas ? Object.values(linhas).reduce((a, l) => a + paresLinha(p, l), 0) : 0;
+  $("#noCarrinho").innerHTML = linhas
+    ? `<span class="nocart__ok" aria-hidden="true">✓</span> No carrinho: ${plur(n, "par", "pares")} em ${plur(Object.keys(linhas).length, "cor", "cores")} · <a href="#/carrinho">Ver carrinho</a>`
+    : "";
+}
+
+/* ---------- página do carrinho ---------- */
+function htmlItemCarrinho(ref) {
+  const p = produtoPorRef(ref);
+  const linhas = Object.entries(carrinho.itens[ref]);
+  const n = linhas.reduce((a, [, l]) => a + paresLinha(p, l), 0);
+  return `<article class="citem" data-ref="${esc(ref)}">
+    <a class="citem__foto shoe-frame" href="#/p/${encodeURIComponent(ref)}">${htmlImagem(p, linhas[0][0])}</a>
+    <div class="citem__info">
+      <div class="citem__topo">
+        <a class="citem__ref" href="#/p/${encodeURIComponent(ref)}">${esc(p.codigo)}</a>
+        <span class="card__price">${esc(p.precoCodigo)}</span>
+      </div>
+      <p class="citem__cat">${esc(p.categoria)} · ${plur(n, "par", "pares")}</p>
+      <ul class="citem__linhas">
+        ${linhas
+          .map(
+            ([cor, l]) => `<li>
+              <span class="dot dot--static" style="--sw:${corSwatch(cor)}"></span>
+              <b>${esc(cor)}</b>
+              <span class="citem__pares">${plur(paresLinha(p, l), "par", "pares")}</span>
+              <span class="citem__desc">${esc(descreverLinha(p, l))}</span>
+            </li>`
+          )
+          .join("")}
+      </ul>
+      <div class="citem__acoes">
+        <button type="button" class="link-btn" data-editar>Alterar</button>
+        <button type="button" class="link-btn link-btn--muted" data-remover>Remover</button>
+      </div>
+    </div>
+  </article>`;
+}
+
+const ICONE_WA = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>`;
+
+function paginaCarrinho() {
+  const refs = Object.keys(carrinho.itens);
+  if (!refs.length)
+    return `<section class="page-head page-head--center">
+      <p class="eyebrow">Carrinho</p>
+      <h1 class="page-title">O carrinho está vazio</h1>
+      <p class="muted">Abre um modelo e carrega em <b>Adicionar ao carrinho</b>.</p>
+      <p><a class="btn" href="#/">Ver coleção</a></p>
+    </section>`;
+  const t = carrinho.totais();
+  return `
+  <section class="page-head page-head--cart">
+    <p class="eyebrow"><span class="eyebrow__line"></span>${esc(CONFIG.colecao)}</p>
+    <h1 class="page-title">Carrinho</h1>
+  </section>
+  <section class="cart">
+    <div class="cart__lista">${refs.map(htmlItemCarrinho).join("")}</div>
+    <aside class="cart__resumo">
+      <h2>Encomenda</h2>
+      <dl class="cart__totais">
+        <div><dt>Modelos</dt><dd>${t.modelos}</dd></div>
+        <div><dt>Cores</dt><dd>${t.cores}</dd></div>
+        <div><dt>Pares</dt><dd>${t.pares}</dd></div>
+      </dl>
+      <label class="campo"><span>Nome / loja</span><input id="cartNome" autocomplete="organization" placeholder="Para sabermos de quem é a encomenda" value="${esc(carrinho.nome)}"></label>
+      <label class="campo"><span>Notas <i>(opcional)</i></span><textarea id="cartNotas" rows="2" placeholder="Ex.: prazo de entrega, morada…">${esc(carrinho.notas)}</textarea></label>
+      <button type="button" class="btn btn--full" id="encomendar">${ICONE_WA}<span>Encomendar por WhatsApp</span></button>
+      <button type="button" class="link-btn link-btn--muted" id="esvaziar">Esvaziar carrinho</button>
+    </aside>
+  </section>`;
+}
+
+function redesenharCarrinho() {
+  if (document.body.dataset.page !== "carrinho") return;
+  $("#app").innerHTML = paginaCarrinho();
+  ativarCarrinho();
+}
+
+function ativarCarrinho() {
+  const app = $("#app");
+  $("#cartNome")?.addEventListener("input", (e) => ((carrinho.nome = e.target.value), carrinho.guardar()));
+  $("#cartNotas")?.addEventListener("input", (e) => ((carrinho.notas = e.target.value), carrinho.guardar()));
+  $("#esvaziar")?.addEventListener("click", () => {
+    if (!confirm("Tirar todos os modelos do carrinho?")) return;
+    carrinho.esvaziar();
+    redesenharCarrinho();
+  });
+  $("#encomendar")?.addEventListener("click", prepararEncomenda);
+  $(".cart__lista", app)?.addEventListener("click", (e) => {
+    const item = e.target.closest(".citem");
+    if (!item) return;
+    const p = produtoPorRef(item.dataset.ref);
+    if (e.target.closest("[data-editar]")) abrirEscolha(p);
+    if (e.target.closest("[data-remover]")) {
+      carrinho.definir(p.ref, {});
+      redesenharCarrinho();
+      aviso(`<span>${esc(p.codigo)} saiu do carrinho</span>`);
+    }
+  });
+}
+
+/* ---------- enviar a encomenda ---------- */
+function textoEncomenda() {
+  const t = carrinho.totais();
+  const partes = [`Olá! Encomenda feita no site ${CONFIG.empresa.nome}:`];
+  if (carrinho.nome.trim()) partes.push(`Cliente: ${carrinho.nome.trim()}`);
+  for (const [ref, linhas] of Object.entries(carrinho.itens)) {
+    const p = produtoPorRef(ref);
+    partes.push(
+      "",
+      `*${p.codigo}* · ${p.categoria} · ${p.precoCodigo}`,
+      ...Object.entries(linhas).map(([cor, l]) => `• ${cor}: ${descreverLinha(p, l, ", ")} (${plur(paresLinha(p, l), "par", "pares")})`)
+    );
+  }
+  partes.push("", `*Total: ${plur(t.modelos, "modelo", "modelos")} · ${plur(t.pares, "par", "pares")}*`);
+  if (carrinho.notas.trim()) partes.push(`Notas: ${carrinho.notas.trim()}`);
+  return partes.join("\n");
+}
+
+function linkWhatsApp() {
+  return `https://wa.me/${CONFIG.empresa.whatsappEncomendas}?text=${encodeURIComponent(textoEncomenda())}`;
+}
+
+function carregarImagem(src) {
+  return new Promise((ok) => {
+    const im = new Image();
+    im.onload = () => ok(im);
+    im.onerror = () => ok(null);
+    im.src = src;
+  });
+}
+
+// primeira foto que exista: cores encomendadas primeiro, depois as outras
+async function fotoModelo(p, preferidas) {
+  const ordem = [...preferidas, ...p.cores.filter((c) => !preferidas.includes(c))];
+  for (const cor of ordem)
+    for (const f of ["png", "mini", "PNG"]) {
+      const im = await carregarImagem(caminhoFoto(p.ref, cor, f));
+      if (im) return im;
+    }
+  return null;
+}
+
+function quebrarTexto(ctx, texto, largura) {
+  const palavras = texto.split(" ");
+  const linhas = [];
+  let atual = "";
+  for (const w of palavras) {
+    const tentativa = atual ? `${atual} ${w}` : w;
+    if (ctx.measureText(tentativa).width > largura && atual) (linhas.push(atual), (atual = w));
+    else atual = tentativa;
+  }
+  if (atual) linhas.push(atual);
+  return linhas;
+}
+
+function retanguloRedondo(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// Imagem (PNG) da encomenda: foto de cada modelo com as cores e números à frente
+async function imagemEncomenda() {
+  const fontes = ['400 40px "Instrument Serif"', 'italic 400 40px "Instrument Serif"', "500 20px Manrope", "600 20px Manrope"];
+  await Promise.all(fontes.map((f) => document.fonts?.load(f).catch(() => {})));
+  const refs = Object.keys(carrinho.itens);
+  const fotos = await Promise.all(refs.map((ref) => fotoModelo(produtoPorRef(ref), Object.keys(carrinho.itens[ref]))));
+
+  const COR = { fundo: "#fffef7", areia: "#f6f0e3", escuro: "#664b32", castanho: "#8f6946", tinta: "#2f2318", suave: "#8a7766", linha: "rgba(102,75,50,0.18)" };
+  const SERIF = '"Instrument Serif", "Times New Roman", serif';
+  const SANS = 'Manrope, system-ui, sans-serif';
+  const W = 1080, M = 64, FOTO = 220, X = M + FOTO + 40, LARG = W - M - X;
+
+  const c = document.createElement("canvas");
+  const ctx = c.getContext("2d");
+
+  // 1.º passo: medir cada modelo
+  const blocos = refs.map((ref, i) => {
+    const p = produtoPorRef(ref);
+    ctx.font = `500 23px ${SANS}`;
+    const linhas = Object.entries(carrinho.itens[ref]).map(([cor, l]) => ({
+      cor,
+      pares: paresLinha(p, l),
+      desc: quebrarTexto(ctx, descreverLinha(p, l), LARG - 34),
+    }));
+    const altTexto = 60 + 40 + linhas.reduce((a, l) => a + 38 + l.desc.length * 32 + 14, 0);
+    return { p, foto: fotos[i], linhas, alt: Math.max(FOTO, altTexto) + 56 };
+  });
+  ctx.font = `500 24px ${SANS}`;
+  const notas = carrinho.notas.trim() ? quebrarTexto(ctx, carrinho.notas.trim(), W - 2 * M) : [];
+  const cliente = carrinho.nome.trim();
+  const ALT_TOPO = cliente ? 296 : 250;
+  const ALT_FIM = 190 + (notas.length ? 50 + notas.length * 34 : 0);
+  c.width = W;
+  c.height = ALT_TOPO + blocos.reduce((a, b) => a + b.alt, 0) + ALT_FIM;
+
+  // 2.º passo: desenhar
+  ctx.fillStyle = COR.fundo;
+  ctx.fillRect(0, 0, W, c.height);
+  ctx.textBaseline = "alphabetic";
+
+  // topo: logótipo, data e cliente
+  ctx.fillStyle = COR.escuro;
+  ctx.beginPath();
+  ctx.arc(M + 32, M + 32, 32, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = COR.fundo;
+  ctx.font = `400 28px ${SERIF}`;
+  ctx.textAlign = "center";
+  ctx.fillText("MV", M + 32, M + 42);
+  ctx.textAlign = "left";
+  ctx.font = `400 46px ${SERIF}`;
+  ctx.fillStyle = COR.escuro;
+  ctx.fillText("Maneira", M + 84, M + 48);
+  const wM = ctx.measureText("Maneira ").width;
+  ctx.font = `italic 400 46px ${SERIF}`;
+  ctx.fillStyle = COR.castanho;
+  ctx.fillText("Vaidosa", M + 84 + wM, M + 48);
+
+  ctx.textAlign = "right";
+  ctx.font = `600 18px ${SANS}`;
+  ctx.fillStyle = COR.castanho;
+  ctx.fillText("ENCOMENDA", W - M, M + 22);
+  ctx.font = `500 22px ${SANS}`;
+  ctx.fillStyle = COR.suave;
+  ctx.fillText(new Date().toLocaleDateString("pt-PT", { day: "numeric", month: "long", year: "numeric" }), W - M, M + 52);
+  ctx.textAlign = "left";
+
+  ctx.font = `400 64px ${SERIF}`;
+  ctx.fillStyle = COR.tinta;
+  ctx.fillText(cliente || CONFIG.colecao, M, M + 160);
+  if (cliente) {
+    ctx.font = `500 22px ${SANS}`;
+    ctx.fillStyle = COR.suave;
+    ctx.fillText(CONFIG.colecao, M, M + 196);
+  }
+  let y = ALT_TOPO;
+  ctx.fillStyle = COR.linha;
+  ctx.fillRect(M, y - 1, W - 2 * M, 1);
+
+  for (const b of blocos) {
+    const y0 = y + 28;
+    // foto
+    ctx.fillStyle = COR.areia;
+    retanguloRedondo(ctx, M, y0, FOTO, FOTO, 28);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,254,247,0.75)";
+    ctx.beginPath();
+    ctx.arc(M + FOTO / 2, y0 + FOTO / 2, FOTO * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+    if (b.foto) {
+      const esc_ = Math.min((FOTO * 0.86) / b.foto.width, (FOTO * 0.72) / b.foto.height);
+      const w = b.foto.width * esc_, h = b.foto.height * esc_;
+      ctx.drawImage(b.foto, M + (FOTO - w) / 2, y0 + (FOTO - h) / 2, w, h);
+    }
+    // referência, categoria, preço
+    let ty = y0 + 46;
+    ctx.font = `400 54px ${SERIF}`;
+    ctx.fillStyle = COR.escuro;
+    ctx.fillText(b.p.codigo, X, ty);
+    ctx.textAlign = "right";
+    ctx.font = `600 20px ${SANS}`;
+    ctx.fillStyle = COR.castanho;
+    ctx.fillText(b.p.precoCodigo, W - M, ty);
+    ctx.textAlign = "left";
+    ty += 40;
+    ctx.font = `600 17px ${SANS}`;
+    ctx.fillStyle = COR.suave;
+    ctx.fillText(b.p.categoria.toUpperCase(), X, ty);
+    ty += 22;
+    // cores
+    for (const l of b.linhas) {
+      ty += 36;
+      const sw = corSwatch(l.cor);
+      const hex = sw.match(/#[0-9a-f]{3,6}/gi);
+      if (sw.startsWith("linear") && hex) {
+        const g = ctx.createLinearGradient(X, ty - 24, X + 22, ty - 2);
+        hex.forEach((h, k) => g.addColorStop(k / (hex.length - 1), h));
+        ctx.fillStyle = g;
+      } else ctx.fillStyle = sw;
+      ctx.beginPath();
+      ctx.arc(X + 11, ty - 8, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(102,75,50,0.35)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.font = `600 25px ${SANS}`;
+      ctx.fillStyle = COR.tinta;
+      ctx.fillText(l.cor, X + 34, ty);
+      ctx.textAlign = "right";
+      ctx.font = `600 21px ${SANS}`;
+      ctx.fillStyle = COR.castanho;
+      ctx.fillText(plur(l.pares, "par", "pares"), W - M, ty);
+      ctx.textAlign = "left";
+      ctx.font = `500 23px ${SANS}`;
+      ctx.fillStyle = COR.suave;
+      for (const linha of l.desc) {
+        ty += 32;
+        ctx.fillText(linha, X + 34, ty);
+      }
+      ty += 14;
+    }
+    y += b.alt;
+    ctx.fillStyle = COR.linha;
+    ctx.fillRect(M, y - 1, W - 2 * M, 1);
+  }
+
+  // totais e notas
+  const t = carrinho.totais();
+  y += 64;
+  ctx.font = `600 18px ${SANS}`;
+  ctx.fillStyle = COR.castanho;
+  ctx.fillText("TOTAL", M, y);
+  y += 62;
+  ctx.font = `400 60px ${SERIF}`;
+  ctx.fillStyle = COR.escuro;
+  ctx.fillText(`${plur(t.modelos, "modelo", "modelos")} · ${plur(t.pares, "par", "pares")}`, M, y);
+  if (notas.length) {
+    y += 56;
+    ctx.font = `600 18px ${SANS}`;
+    ctx.fillStyle = COR.castanho;
+    ctx.fillText("NOTAS", M, y);
+    ctx.font = `500 24px ${SANS}`;
+    ctx.fillStyle = COR.tinta;
+    for (const linha of notas) (y += 34), ctx.fillText(linha, M, y);
+  }
+
+  return new Promise((ok) => c.toBlob(ok, "image/png"));
+}
+
+async function prepararEncomenda() {
+  const btn = $("#encomendar");
+  const txt = $("span", btn);
+  btn.disabled = true;
+  txt.textContent = "A preparar a encomenda…";
+  let blob = null;
+  try {
+    blob = await imagemEncomenda();
+  } catch (err) {
+    console.error(err);
+  }
+  btn.disabled = false;
+  txt.textContent = "Encomendar por WhatsApp";
+
+  const data = new Date().toISOString().slice(0, 10);
+  const nomeFicheiro = `encomenda-maneira-vaidosa-${data}.png`;
+  const ficheiro = blob ? new File([blob], nomeFicheiro, { type: "image/png" }) : null;
+  const url = blob ? URL.createObjectURL(blob) : "";
+  const podePartilhar = !!(ficheiro && navigator.canShare?.({ files: [ficheiro] }));
+
+  const painel = abrirPainel(
+    `<header class="painel__topo">
+      <div><p class="eyebrow">Enviar encomenda</p><h2 class="painel__titulo">Quase feito</h2></div>
+      <button type="button" class="painel__x" data-fechar aria-label="Fechar">×</button>
+    </header>
+    <div class="painel__corpo">
+      ${blob ? `<div class="enc__preview"><img src="${url}" alt="Imagem da encomenda"></div>` : ""}
+      <ol class="enc__passos">
+        ${
+          blob
+            ? `<li><b>${podePartilhar ? "Envia a imagem" : "Guarda a imagem"}</b>
+                <p>${podePartilhar ? "Escolhe o WhatsApp e a conversa da Maneira Vaidosa." : "A imagem tem as fotos dos modelos e todas as quantidades."}</p>
+                <button type="button" class="btn btn--ghost" id="encImagem">${podePartilhar ? "Partilhar imagem" : "Descarregar imagem"}</button></li>`
+            : ""
+        }
+        <li><b>Abre o WhatsApp</b>
+          <p>A mensagem já vai escrita com a encomenda completa${blob ? " — junta-lhe a imagem e envia" : ""}.</p>
+          <a class="btn" id="encWa" href="${linkWhatsApp()}" target="_blank" rel="noopener">${ICONE_WA}Abrir WhatsApp</a></li>
+      </ol>
+      <p class="enc__nota" id="encNota" hidden>Encomenda enviada? <button type="button" class="link-btn" id="encLimpar">Esvaziar o carrinho</button></p>
+    </div>`,
+    "painel--encomenda"
+  );
+
+  $("#encImagem", painel)?.addEventListener("click", async () => {
+    if (podePartilhar) {
+      try {
+        await navigator.share({ files: [ficheiro], title: "Encomenda Maneira Vaidosa" });
+      } catch {}
+    } else {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = nomeFicheiro;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  });
+  $("#encWa", painel).addEventListener("click", () => ($("#encNota", painel).hidden = false));
+  $("#encLimpar", painel).addEventListener("click", () => {
+    carrinho.esvaziar();
+    fecharPainel();
+    redesenharCarrinho();
+    aviso("<span>Obrigada pela encomenda!</span>");
+  });
+}
+
 /* ---------- router ---------- */
 function rota() {
   const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
@@ -551,6 +1224,7 @@ function rota() {
   if (tipo === "c" && val) return { nome: "categoria", val, nav: val };
   if (tipo === "p" && val) return { nome: "produto", val, nav: estado.produtos.find((p) => p.ref === val)?.catSlug };
   if (tipo === "contactos") return { nome: "contactos", nav: "contactos" };
+  if (tipo === "carrinho") return { nome: "carrinho", nav: "carrinho" };
   if (tipo === "" || tipo === "colecao") return { nome: "inicio", nav: "todos" };
   return { nome: "404" };
 }
@@ -571,7 +1245,8 @@ function render() {
     r.nome === "inicio" ? paginaInicio() :
     r.nome === "categoria" ? paginaCategoria(r.val) :
     r.nome === "produto" ? paginaProduto(r.val) :
-    r.nome === "contactos" ? paginaContactos() : pagina404();
+    r.nome === "contactos" ? paginaContactos() :
+    r.nome === "carrinho" ? paginaCarrinho() : pagina404();
   app.classList.add("is-entering");
 
   // ao voltar de uma categoria para "Todos", salta diretamente para a grelha
@@ -584,6 +1259,7 @@ function render() {
     categoria: `${plural(estado.categorias.find((c) => c.slug === r.val)?.nome || "")} — ${CONFIG.empresa.nome}`,
     produto: `${estado.produtos.find((p) => p.ref === r.val)?.codigo || ""} — ${CONFIG.empresa.nome}`,
     contactos: `Contactos — ${CONFIG.empresa.nome}`,
+    carrinho: `Carrinho — ${CONFIG.empresa.nome}`,
   };
   document.title = titulos[r.nome] || CONFIG.empresa.nome;
 
@@ -591,6 +1267,9 @@ function render() {
   ativarCards();
   if (r.nome === "produto") ativarProduto(r.val);
   if (r.nome === "inicio") ativarHero();
+  if (r.nome === "carrinho") ativarCarrinho();
+  $("#cartBtn")?.classList.toggle("is-active", r.nome === "carrinho");
+  fecharPainel();
   // centra o link ativo na barra de filtros (telemóvel)
   $("#nav .is-active")?.scrollIntoView({ block: "nearest", inline: "center" });
   ultimaRota = r;
@@ -613,6 +1292,8 @@ $("#year").textContent = new Date().getFullYear();
 (async function iniciar() {
   try {
     await carregarDados();
+    carrinho.carregar();
+    atualizarContador();
     window.addEventListener("hashchange", render);
     render();
     aoScroll();
