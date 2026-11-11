@@ -228,23 +228,24 @@ main.is-entering > *:nth-child(2) { animation-delay: 0.06s; }
 .float .shoe-frame {
   width: 100%; height: 100%;
   border-radius: 50%;
+  -webkit-clip-path: circle(50%);
+  clip-path: circle(50%); /* corta a foto ao círculo em todos os browsers (o overflow não chega no Safari com animações) */
   display: grid; place-items: center;
-  background: inherit; /* fundo herdado: o multiply funciona dentro do bloco animado */
-  animation: bob 6s ease-in-out infinite;
+  background: inherit; /* fundo herdado: o multiply funciona dentro da roda */
 }
 .float:hover { box-shadow: 0 40px 70px -30px rgba(102, 75, 50, 0.55); }
-.float .shoe { width: 80%; mix-blend-mode: multiply; transition: transform 0.6s var(--ease); }
+.float .shoe { width: 76%; max-height: 66%; object-fit: contain; mix-blend-mode: multiply; transition: transform 0.6s var(--ease); animation: bob 6s ease-in-out infinite; } /* só o sapato flutua; a roda fica parada */
 .float:hover .shoe { transform: scale(1.12) rotate(-6deg); }
 .float--1 { right: 26%; top: 15%; animation-delay: 0.3s; }
 .float--2 { right: 6%; top: 30%; width: clamp(130px, 18vw, 250px); animation-delay: 0.45s; }
 .float--3 { right: 30%; bottom: 12%; width: clamp(90px, 11vw, 160px); animation-delay: 0.6s; }
 .float--4 { right: 12%; bottom: 6%; animation-delay: 0.75s; }
 .float--5 { right: 44%; top: 8%; width: clamp(80px, 9vw, 130px); animation-delay: 0.9s; background: var(--sand-2); }
-.float--2 .shoe-frame { animation-delay: -2s; }
-.float--3 .shoe-frame { animation-delay: -4s; }
-.float--4 .shoe-frame { animation-delay: -1s; }
+.float--2 .shoe { animation-delay: -2s; }
+.float--3 .shoe { animation-delay: -4s; }
+.float--4 .shoe { animation-delay: -1s; }
 @keyframes pop { from { opacity: 0; scale: 0.6; } }
-@keyframes bob { 50% { transform: translateY(-8px) rotate(-3deg); } }
+@keyframes bob { 50% { translate: 0 -8px; rotate: -3deg; } } /* translate/rotate próprios: não chocam com o transform do hover */
 
 .scroll-hint {
   position: absolute;
@@ -274,8 +275,6 @@ main.is-entering > *:nth-child(2) { animation-delay: 0.06s; }
   background: var(--dark);
   color: var(--cream);
   padding: 18px 0;
-  transform: rotate(-1.2deg);
-  margin: -10px -10px 0;
   position: relative;
   z-index: 3;
 }
