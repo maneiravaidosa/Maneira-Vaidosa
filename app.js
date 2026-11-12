@@ -16,7 +16,7 @@ const CONFIG = {
   distribuicao: "Distribuiçao de Numeracoes.xlsx",
   // Ordem dos filtros por sexo no topo do site
   sexos: ["Mulher", "Homem", "Criança"],
-  // Modelos que são o mesmo sapato e usam as fotos de outra referência.
+  // Modelos que são o mesmo sapato: as cores sem foto própria usam as fotos desta outra referência.
   // Chave: "referência" ou "referência Sexo" (quando a mesma referência existe para sexos diferentes).
   mesmasFotos: {
     "3521C": "3521",
@@ -188,7 +188,9 @@ async function carregarDados() {
     if (usados.has(id)) id = `${id}-${p.fornecedor}`;
     usados.add(id);
     p.id = id;
-    p.foto = CONFIG.mesmasFotos[`${p.ref} ${p.sexo}`] ?? CONFIG.mesmasFotos[p.ref] ?? p.ref;
+    // onde procurar as fotos: primeiro a própria referência, depois a do mesmo sapato (se houver)
+    const outra = CONFIG.mesmasFotos[`${p.ref} ${p.sexo}`] ?? CONFIG.mesmasFotos[p.ref];
+    p.fotos = outra && outra !== p.ref ? [p.ref, outra] : [p.ref];
   }
   for (const p of estado.produtos) p.corInicial = aleatorio(p.cores); // muda a cada refresh
 
@@ -214,20 +216,24 @@ async function carregarDados() {
 /* ---------- imagens com fallback ---------- */
 // Se a foto de uma cor não existir, tenta .PNG; depois tenta as outras cores; por fim mostra um marcador.
 // Imagem com alternativas: se a miniatura não existir usa a foto grande; se a cor não tiver foto, tenta outra cor.
+// lista de tentativas "referência~cor": a cor pedida (na própria referência e na do mesmo sapato), depois as outras cores
+const tentativas = (p, cores) => cores.flatMap((c) => p.fotos.map((r) => `${r}~${c}`));
+
 function htmlImagem(p, cor, extraClass = "", mini = true) {
-  const ordem = [cor, ...p.cores.filter((c) => c !== cor)];
+  const ordem = tentativas(p, [cor, ...p.cores.filter((c) => c !== cor)]);
   const formatos = mini ? "mini|png|PNG" : "png|PNG";
-  return `<img class="shoe ${extraClass}" src="${caminhoFoto(p.foto, cor, formatos.split("|")[0])}" alt="Modelo ${esc(p.codigo)} — ${esc(cor)}"
-    loading="lazy" decoding="async" data-ref="${esc(p.foto)}" data-ordem="${esc(ordem.join("|"))}" data-i="0"
+  return `<img class="shoe ${extraClass}" src="${caminhoFoto(p.fotos[0], cor, formatos.split("|")[0])}" alt="Modelo ${esc(p.codigo)} — ${esc(cor)}"
+    loading="lazy" decoding="async" data-ordem="${esc(ordem.join("|"))}" data-i="0"
     data-formatos="${formatos}" data-f="0">`;
 }
 
-function trocarFoto(img, ref, cor) {
-  img.dataset.ordem = cor;
+function trocarFoto(img, p, cor) {
+  const ordem = tentativas(p, [cor]);
+  img.dataset.ordem = ordem.join("|");
   img.dataset.i = "0";
   img.dataset.f = "0";
   img.closest(".shoe-frame")?.classList.remove("is-missing");
-  img.src = caminhoFoto(ref, cor, img.dataset.formatos.split("|")[0]);
+  img.src = caminhoFoto(p.fotos[0], cor, img.dataset.formatos.split("|")[0]);
 }
 
 document.addEventListener(
@@ -240,8 +246,8 @@ document.addEventListener(
     let i = +img.dataset.i;
     let f = +img.dataset.f + 1;
     if (f >= formatos.length) {
-      // nenhum formato desta cor existe: passa para a cor seguinte (exceto na página do modelo)
-      if (img.dataset.fixa === "1" || i + 1 >= ordem.length) {
+      // nenhum formato existe: passa à tentativa seguinte (na página do modelo, só as da cor escolhida)
+      if (i + 1 >= ordem.length) {
         img.removeAttribute("data-ordem");
         img.closest(".shoe-frame")?.classList.add("is-missing");
         img.src = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
@@ -251,7 +257,8 @@ document.addEventListener(
       f = 0;
     }
     img.dataset.f = f;
-    img.src = caminhoFoto(img.dataset.ref, ordem[i], formatos[f]);
+    const [ref, cor] = ordem[i].split("~");
+    img.src = caminhoFoto(ref, cor, formatos[f]);
   },
   true
 );
@@ -561,9 +568,8 @@ function ativarProduto(id) {
     stage.classList.remove("is-missing");
     img.classList.add("is-swapping");
     setTimeout(() => {
-      img.dataset.fixa = "1"; // na página do produto, a cor escolhida não troca por outra
       img.alt = `Modelo ${p.codigo} — ${cor}`;
-      trocarFoto(img, p.foto, cor);
+      trocarFoto(img, p, cor);
       const done = () => img.classList.remove("is-swapping");
       if (img.complete) requestAnimationFrame(done);
       else img.addEventListener("load", done, { once: true }), img.addEventListener("error", done, { once: true });
@@ -598,7 +604,7 @@ function ativarCards() {
     const escolher = (d) => {
       if (d.classList.contains("is-active")) return;
       card.querySelectorAll(".dot").forEach((x) => x.classList.toggle("is-active", x === d));
-      trocarFoto(img, p.foto, d.dataset.cor);
+      trocarFoto(img, p, d.dataset.cor);
       if (p) p.corInicial = d.dataset.cor;
     };
     card.addEventListener("pointerover", (e) => {
@@ -1083,10 +1089,11 @@ function carregarImagem(src) {
 async function fotoModelo(p, preferidas) {
   const ordem = [...preferidas, ...p.cores.filter((c) => !preferidas.includes(c))];
   for (const cor of ordem)
-    for (const f of ["png", "mini", "PNG"]) {
-      const im = await carregarImagem(caminhoFoto(p.foto, cor, f));
-      if (im) return im;
-    }
+    for (const ref of p.fotos)
+      for (const f of ["png", "mini", "PNG"]) {
+        const im = await carregarImagem(caminhoFoto(ref, cor, f));
+        if (im) return im;
+      }
   return null;
 }
 
