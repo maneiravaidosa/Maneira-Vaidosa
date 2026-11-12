@@ -37,6 +37,7 @@ EXTENSOES = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 MODELO = "isnet-general-use"
 MODELO_POR_REF = {
     "1128": "u2net",
+    "2072": "u2net",
     "2703": "u2net",
     "3521": "u2net",
     "3521C": "u2net",
@@ -51,15 +52,21 @@ def nome_destino(ficheiro: Path):
     return m.group(1), m.group(2).lower()
 
 
-def recuperar_sola(original: Image.Image, cortada: Image.Image) -> Image.Image:
-    """Volta a juntar a sola escura que o recorte cortou.
+def recuperar_sola(original: Image.Image, cortada: Image.Image, escuro_max=70, passos=60) -> Image.Image:
+    """Volta a juntar a sola preta que o recorte cortou.
 
-    Os píxeis muito escuros da foto original, colados ao sapato, são sola (a sombra do chão é mais clara);
-    depois as arestas ficam nítidas: o "quase sapato" fica opaco e o "quase fundo" (nevoeiro) desaparece."""
+    A partir do sapato recortado, "cresce" pelos píxeis muito escuros da foto original que lhe estão ligados
+    (a sola de borracha); a sombra do chão é mais clara e trava o crescimento, por isso não entra.
+    No fim as arestas ficam nítidas: o "quase sapato" fica opaco e o "quase fundo" (nevoeiro) desaparece."""
     a = cortada.getchannel("A")
-    perto = a.point(lambda v: 255 if v > 128 else 0).filter(ImageFilter.MaxFilter(41))
-    escuro = original.convert("L").point(lambda v: 255 if v < 75 else 0)
-    m = ImageChops.lighter(a, ImageChops.multiply(escuro, perto)).filter(ImageFilter.MedianFilter(5))
+    escuro = original.convert("L").point(lambda v: 255 if v < escuro_max else 0)
+    m = a.point(lambda v: 255 if v > 128 else 0)
+    for _ in range(passos):
+        novo = ImageChops.lighter(m, ImageChops.multiply(m.filter(ImageFilter.MaxFilter(5)), escuro))
+        if ImageChops.difference(novo, m).getbbox() is None:
+            break
+        m = novo
+    m = ImageChops.lighter(a, m).filter(ImageFilter.MedianFilter(5))
     m = m.point(lambda v: 0 if v <= 70 else 255 if v >= 190 else int((v - 70) * 255 / 120))
     cortada.putalpha(m.filter(ImageFilter.GaussianBlur(0.8)))
     return cortada
