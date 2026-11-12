@@ -343,6 +343,70 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest("#subnav")) abrirSubnav(false);
 });
 
+/* ---------- ordenar e filtrar por preço ---------- */
+// Fica escolhido enquanto se navega pelo site (volta ao normal ao recarregar a página)
+const vista = { ordem: "", min: 0, max: 0 };
+let listaAtual = [];
+
+function aplicarVista(lista) {
+  let out = lista;
+  if (vista.min || vista.max)
+    out = out.filter((p) => p.preco > 0 && (!vista.min || p.preco >= vista.min) && (!vista.max || p.preco <= vista.max));
+  if (vista.ordem) {
+    const dir = vista.ordem === "desc" ? -1 : 1;
+    // modelos sem preço ficam sempre no fim
+    out = [...out].sort((a, b) => (!a.preco - !b.preco) || dir * (a.preco - b.preco));
+  }
+  return out;
+}
+
+function htmlVista(lista) {
+  const precos = [...new Set(lista.map((p) => p.preco).filter((v) => v > 0))].sort((a, b) => a - b);
+  const opcoes = (atual, vazio) =>
+    `<option value="">${vazio}</option>` +
+    precos.map((v) => `<option value="${v}" ${v === atual ? "selected" : ""}>${esc(codigoPreco(v))}</option>`).join("");
+  return `<div class="vista">
+    <label class="vista__campo"><span>Ordenar</span>
+      <select data-vista="ordem">
+        <option value="">Destaques</option>
+        <option value="asc" ${vista.ordem === "asc" ? "selected" : ""}>Preço: mais baixo</option>
+        <option value="desc" ${vista.ordem === "desc" ? "selected" : ""}>Preço: mais alto</option>
+      </select>
+    </label>
+    ${
+      precos.length > 1
+        ? `<label class="vista__campo"><span>Preço de</span><select data-vista="min">${opcoes(vista.min, "—")}</select></label>
+           <label class="vista__campo"><span>a</span><select data-vista="max">${opcoes(vista.max, "—")}</select></label>`
+        : ""
+    }
+  </div>`;
+}
+
+// grelha principal (início e páginas filtradas): guarda a lista para reordenar sem recarregar a página
+function htmlGrelhaVista(lista) {
+  listaAtual = lista;
+  const visiveis = aplicarVista(lista);
+  return `<div id="grelha">${htmlGrelha(visiveis)}</div>`;
+}
+
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest("[data-vista]");
+  if (!sel) return;
+  const k = sel.dataset.vista;
+  vista[k] = k === "ordem" ? sel.value : +sel.value || 0;
+  // se o mínimo ficar acima do máximo, troca-os
+  if (vista.min && vista.max && vista.min > vista.max) [vista.min, vista.max] = [vista.max, vista.min];
+  document.querySelectorAll("[data-vista]").forEach((s) => (s.value = vista[s.dataset.vista] || ""));
+  const visiveis = aplicarVista(listaAtual);
+  $("#grelha").innerHTML = visiveis.length
+    ? htmlGrelha(visiveis)
+    : `<p class="empty">Não há modelos nesse intervalo de preço.</p>`;
+  const n = $("#contagem");
+  if (n) n.textContent = plur(visiveis.length, "modelo", "modelos");
+  ativarReveal();
+  ativarCards();
+});
+
 function htmlGrelha(lista) {
   if (!lista.length) return `<p class="empty">Ainda não há modelos aqui.</p>`;
   return `<div class="grid">${lista.map(htmlCard).join("")}</div>`;
@@ -406,12 +470,12 @@ function paginaInicio() {
   <section class="catalog" id="colecao">
     <div class="catalog__head">
       <div>
-        <p class="eyebrow"><span class="eyebrow__line"></span>${estado.produtos.length} modelos</p>
+        <p class="eyebrow"><span class="eyebrow__line"></span><span id="contagem">${plur(aplicarVista(estado.produtos).length, "modelo", "modelos")}</span></p>
         <h2 class="section-title">A <em>coleção</em></h2>
       </div>
-      ${htmlChips()}
+      <div class="filtros-col">${htmlChips()}${htmlVista(estado.produtos)}</div>
     </div>
-    ${htmlGrelha(estado.produtos)}
+    ${htmlGrelhaVista(estado.produtos)}
   </section>`;
 }
 
@@ -424,12 +488,12 @@ function paginaFiltro(sexoSlug, catSlug) {
   const extra = cat && sexo ? `${esc(sexo.nome)} · ` : "";
   return `
   <section class="page-head">
-    <p class="eyebrow"><span class="eyebrow__line"></span>${extra}${esc(CONFIG.colecao)} · ${plur(lista.length, "modelo", "modelos")}</p>
+    <p class="eyebrow"><span class="eyebrow__line"></span>${extra}${esc(CONFIG.colecao)} · <span id="contagem">${plur(aplicarVista(lista).length, "modelo", "modelos")}</span></p>
     <h1 class="page-title">${esc(titulo)}</h1>
   </section>
   <section class="catalog catalog--flush">
-    <div class="catalog__head catalog__head--right">${htmlChips(sexoSlug, catSlug)}</div>
-    ${htmlGrelha(lista)}
+    <div class="catalog__head catalog__head--right"><div class="filtros-col">${htmlChips(sexoSlug, catSlug)}${htmlVista(lista)}</div></div>
+    ${htmlGrelhaVista(lista)}
   </section>`;
 }
 
