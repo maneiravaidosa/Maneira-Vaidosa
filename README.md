@@ -30,10 +30,19 @@ O nome de cada foto tem de ser **referência + `_` + cor**, por exemplo:
 
 - A cor tem de ser **igual à do Excel** (maiúsculas/minúsculas não importa; acentos sim).
 - Para **substituir** uma foto, basta pôr a nova com o mesmo nome por cima da antiga.
+- Não deixe nomes como `2720_taupe(1).jpg` (cópias): o `(1)` passaria a ser uma cor diferente.
+- **Atenção:** pôr as fotos nesta pasta não chega — é preciso convertê-las (passo 4), senão não aparecem no site.
 
 ### 3. Se for um modelo ou uma cor nova, acrescentar a linha no Excel
 
-No `verao2027.xlsx`, uma linha por cor: Referência, Fornecedor, Numeração, Cor, Preço, Categoria.
+No `verao2027.xlsx`, uma linha por cor: Referência, Fornecedor, Numeração, Numeração 2, Cor, Preço, Categoria, Sexo.
+
+- **Numeração 2** pode ficar vazia quando o modelo só tem uma numeração.
+- **Sexo**: Mulher, Homem ou Criança (aparecem como filtros no topo do site).
+- Se a numeração for nova (ex.: `28-34`), acrescente-a ao Excel `Distribuiçao de Numeracoes.xlsx`.
+- Se o mesmo sapato existir com outra referência (ex.: versão de criança), pode usar as mesmas fotos:
+  acrescente-o a `CONFIG.mesmasFotos` no início de `app.js` (ex.: `"3521C": "3521"`, ou `"2703 Homem": "3521"`
+  quando a referência também existe para outro sexo).
 
 ### 4. Converter as fotos
 
@@ -99,9 +108,15 @@ O carrinho fica guardado no browser de cada cliente (não precisa de conta).
 
 ### Quantos pares tem uma série
 
-Está em `CONFIG.curvas` no início de `app.js`, conforme o número de tamanhos da série:
-séries de 6 números (35-40, 36-41) levam **1 · 2 · 3 · 3 · 2 · 1** pares (12 pares).
-Ex.: 35-40 = 35×1, 36×2, 37×3, 38×3, 39×2, 40×1. Séries com outro número de tamanhos levam 1 par de cada número.
+Está no Excel `Distribuiçao de Numeracoes.xlsx` (colunas **Numeração** e **Distribuição**), por exemplo:
+
+| Numeração | Distribuição |
+|---|---|
+| 35-40 | 1 2 3 3 2 1 |
+| 28-34 | 1 2 2 2 2 2 1 |
+
+Ex.: 35-40 = 35×1, 36×2, 37×3, 38×3, 39×2, 40×1 (12 pares). Uma numeração que não esteja nesse Excel leva 1 par de cada número.
+No carrinho e na imagem da encomenda aparece sempre a contagem de cada número.
 
 ## Formatos
 

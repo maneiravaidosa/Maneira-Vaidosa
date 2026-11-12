@@ -2,7 +2,7 @@
    Maneira Vaidosa — catálogo
    O site lê diretamente o(s) ficheiro(s) Excel e as fotos da pasta png/.
    Para acrescentar modelos basta:
-     1. acrescentar linhas ao Excel (Referência, Fornecedor, Numeração, Cor, Preço, Categoria)
+     1. acrescentar linhas ao Excel (Referência, Fornecedor, Numeração, Numeração 2, Cor, Preço, Categoria, Sexo)
      2. criar a pasta png/<referência>/ com as fotos "<referência> <cor em minúsculas>.png"
    ========================================================================= */
 
@@ -11,11 +11,16 @@ const CONFIG = {
   ficheiros: ["verao2027.xlsx"],
   colecao: "Verão 2027",
   pastaFotos: "png",
-  // Quantos pares de cada número leva uma série, conforme o número de tamanhos da série.
-  // Ex.: série 35-40 (6 números) → 35×1, 36×2, 37×3, 38×3, 39×2, 40×1 = 12 pares.
-  // Séries com outro número de tamanhos que não esteja aqui levam 1 par de cada número.
-  curvas: {
-    6: [1, 2, 3, 3, 2, 1],
+  // Excel com quantos pares de cada número leva cada série (colunas Numeração e Distribuição, ex.: "35-40" | "1 2 3 3 2 1").
+  // Séries que não estejam lá levam 1 par de cada número.
+  distribuicao: "Distribuiçao de Numeracoes.xlsx",
+  // Ordem dos filtros por sexo no topo do site
+  sexos: ["Mulher", "Homem", "Criança"],
+  // Modelos que são o mesmo sapato: as cores sem foto própria usam as fotos desta outra referência.
+  // Chave: "referência" ou "referência Sexo" (quando a mesma referência existe para sexos diferentes).
+  mesmasFotos: {
+    "3521C": "3521",
+    "2703 Homem": "3521",
   },
   empresa: {
     nome: "Maneira Vaidosa",
@@ -96,23 +101,43 @@ function caminhoFoto(ref, cor, formato = "png") {
 
 /* ---------- dados ---------- */
 const estado = {
-  produtos: [], // [{ref, fornecedor, codigo, numeracao, preco, precoCodigo, categoria, catSlug, cores:[...], corInicial}]
+  produtos: [], // [{id, ref, foto, fornecedor, codigo, series, numeracao, preco, precoCodigo, categoria, catSlug, sexo, sexoSlug, cores:[...], corInicial}]
   categorias: [], // [{nome, slug, total}]
+  sexos: [], // [{nome, slug, total}]
+  curvas: {}, // { "35-40": [1, 2, 3, 3, 2, 1], ... } (Excel da distribuição)
 };
 
 function normalizarCabecalho(h) {
   return semAcentos(h).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-async function carregarExcel(ficheiro) {
-  const resp = await fetch(ficheiro, { cache: "no-store" });
+async function lerFolha(ficheiro) {
+  const resp = await fetch(encodeURI(ficheiro), { cache: "no-store" });
   if (!resp.ok) throw new Error(`Não foi possível abrir ${ficheiro}`);
   const wb = XLSX.read(await resp.arrayBuffer(), { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const linhas = XLSX.utils.sheet_to_json(ws, { defval: null, raw: true });
-  return linhas.map((l) => {
+  return XLSX.utils.sheet_to_json(ws, { defval: null, raw: true }).map((l) => {
     const o = {};
     for (const [k, v] of Object.entries(l)) o[normalizarCabecalho(k)] = v;
+    return o;
+  });
+}
+
+// "35-40" | "1 2 3 3 2 1"  →  estado.curvas["35-40"] = [1, 2, 3, 3, 2, 1]
+async function carregarDistribuicao() {
+  try {
+    for (const o of await lerFolha(CONFIG.distribuicao)) {
+      const serie = String(o.numeracao ?? "").trim();
+      const qtd = String(o.distribuicao ?? "").trim().split(/[\s,;]+/).map(Number);
+      if (serie && qtd.length && qtd.every((n) => Number.isFinite(n))) estado.curvas[serie] = qtd;
+    }
+  } catch (err) {
+    console.warn("Distribuição de numerações não encontrada; cada série leva 1 par de cada número.", err);
+  }
+}
+
+async function carregarExcel(ficheiro) {
+  return (await lerFolha(ficheiro)).map((o) => {
     return {
       ref: o.referencia != null ? String(o.referencia).trim() : "",
       fornecedor: o.fornecedor != null && String(o.fornecedor).trim() !== "" ? String(o.fornecedor).trim() : "0",
@@ -121,18 +146,23 @@ async function carregarExcel(ficheiro) {
       cor: o.cor != null ? capitalizar(String(o.cor).trim()) : "",
       preco: lerPreco(o.preco),
       categoria: o.categoria != null ? capitalizar(String(o.categoria).trim()) : "Outros",
+      sexo: o.sexo != null && String(o.sexo).trim() !== "" ? capitalizar(String(o.sexo).trim()) : "",
     };
   }).filter((l) => l.ref);
 }
 
 async function carregarDados() {
-  const todas = (await Promise.all(CONFIG.ficheiros.map(carregarExcel))).flat();
+  const [todas] = await Promise.all([Promise.all(CONFIG.ficheiros.map(carregarExcel)).then((x) => x.flat()), carregarDistribuicao()]);
   const mapa = new Map();
   for (const l of todas) {
-    let p = mapa.get(l.ref);
+    // a mesma referência pode existir para sexos/fornecedores diferentes (ex.: 2703 Mulher e 2703 Homem)
+    const chave = `${l.fornecedor}|${l.ref}|${l.sexo}`;
+    let p = mapa.get(chave);
     if (!p) {
       p = {
         ref: l.ref,
+        sexo: l.sexo,
+        sexoSlug: slug(l.sexo),
         fornecedor: l.fornecedor,
         codigo: `${l.fornecedor}-${l.ref}`,
         numeracao: l.numeracao,
@@ -143,15 +173,24 @@ async function carregarDados() {
         cores: [],
         series: [], // ex.: ["35-40", "36-41"] (colunas Numeração e Numeração 2)
       };
-      mapa.set(l.ref, p);
+      mapa.set(chave, p);
     }
     for (const sr of [l.numeracao, l.numeracao2]) if (sr && !p.series.includes(sr)) p.series.push(sr);
     if (l.cor && !p.cores.includes(l.cor)) p.cores.push(l.cor);
   }
   estado.produtos = [...mapa.values()].filter((p) => p.cores.length);
+  const usados = new Set();
   for (const p of estado.produtos) {
     if (!p.series.length) p.series.push(p.numeracao || "Único");
     p.numeracao = p.series.join(" · ");
+    // id usado nos links e no carrinho: a referência; se a referência se repetir, as seguintes ficam referência-sexo
+    let id = usados.has(p.ref) ? `${p.ref}-${p.sexoSlug || p.fornecedor}` : p.ref;
+    if (usados.has(id)) id = `${id}-${p.fornecedor}`;
+    usados.add(id);
+    p.id = id;
+    // onde procurar as fotos: primeiro a própria referência, depois a do mesmo sapato (se houver)
+    const outra = CONFIG.mesmasFotos[`${p.ref} ${p.sexo}`] ?? CONFIG.mesmasFotos[p.ref];
+    p.fotos = outra && outra !== p.ref ? [p.ref, outra] : [p.ref];
   }
   for (const p of estado.produtos) p.corInicial = aleatorio(p.cores); // muda a cada refresh
 
@@ -162,25 +201,39 @@ async function carregarDados() {
     cats.set(p.catSlug, c);
   }
   estado.categorias = [...cats.values()];
+
+  const sexos = new Map();
+  for (const p of estado.produtos) {
+    if (!p.sexo) continue;
+    const x = sexos.get(p.sexoSlug) || { nome: p.sexo, slug: p.sexoSlug, total: 0 };
+    x.total++;
+    sexos.set(p.sexoSlug, x);
+  }
+  const ordem = (n) => ((i) => (i < 0 ? 99 : i))(CONFIG.sexos.indexOf(n));
+  estado.sexos = [...sexos.values()].sort((a, b) => ordem(a.nome) - ordem(b.nome));
 }
 
 /* ---------- imagens com fallback ---------- */
 // Se a foto de uma cor não existir, tenta .PNG; depois tenta as outras cores; por fim mostra um marcador.
 // Imagem com alternativas: se a miniatura não existir usa a foto grande; se a cor não tiver foto, tenta outra cor.
+// lista de tentativas "referência~cor": a cor pedida (na própria referência e na do mesmo sapato), depois as outras cores
+const tentativas = (p, cores) => cores.flatMap((c) => p.fotos.map((r) => `${r}~${c}`));
+
 function htmlImagem(p, cor, extraClass = "", mini = true) {
-  const ordem = [cor, ...p.cores.filter((c) => c !== cor)];
+  const ordem = tentativas(p, [cor, ...p.cores.filter((c) => c !== cor)]);
   const formatos = mini ? "mini|png|PNG" : "png|PNG";
-  return `<img class="shoe ${extraClass}" src="${caminhoFoto(p.ref, cor, formatos.split("|")[0])}" alt="Modelo ${esc(p.codigo)} — ${esc(cor)}"
-    loading="lazy" decoding="async" data-ref="${esc(p.ref)}" data-ordem="${esc(ordem.join("|"))}" data-i="0"
+  return `<img class="shoe ${extraClass}" src="${caminhoFoto(p.fotos[0], cor, formatos.split("|")[0])}" alt="Modelo ${esc(p.codigo)} — ${esc(cor)}"
+    loading="lazy" decoding="async" data-ordem="${esc(ordem.join("|"))}" data-i="0"
     data-formatos="${formatos}" data-f="0">`;
 }
 
-function trocarFoto(img, ref, cor) {
-  img.dataset.ordem = cor;
+function trocarFoto(img, p, cor) {
+  const ordem = tentativas(p, [cor]);
+  img.dataset.ordem = ordem.join("|");
   img.dataset.i = "0";
   img.dataset.f = "0";
   img.closest(".shoe-frame")?.classList.remove("is-missing");
-  img.src = caminhoFoto(ref, cor, img.dataset.formatos.split("|")[0]);
+  img.src = caminhoFoto(p.fotos[0], cor, img.dataset.formatos.split("|")[0]);
 }
 
 document.addEventListener(
@@ -193,8 +246,8 @@ document.addEventListener(
     let i = +img.dataset.i;
     let f = +img.dataset.f + 1;
     if (f >= formatos.length) {
-      // nenhum formato desta cor existe: passa para a cor seguinte (exceto na página do modelo)
-      if (img.dataset.fixa === "1" || i + 1 >= ordem.length) {
+      // nenhum formato existe: passa à tentativa seguinte (na página do modelo, só as da cor escolhida)
+      if (i + 1 >= ordem.length) {
         img.removeAttribute("data-ordem");
         img.closest(".shoe-frame")?.classList.add("is-missing");
         img.src = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
@@ -204,7 +257,8 @@ document.addEventListener(
       f = 0;
     }
     img.dataset.f = f;
-    img.src = caminhoFoto(img.dataset.ref, ordem[i], formatos[f]);
+    const [ref, cor] = ordem[i].split("~");
+    img.src = caminhoFoto(ref, cor, formatos[f]);
   },
   true
 );
@@ -224,10 +278,10 @@ function htmlDots(p, ativa, grande = false) {
 
 function htmlCard(p, i) {
   return `
-  <a class="card reveal" href="#/p/${encodeURIComponent(p.ref)}" style="--d:${(i % 4) * 70}ms" data-ref="${esc(p.ref)}">
+  <a class="card reveal" href="#/p/${encodeURIComponent(p.id)}" style="--d:${(i % 4) * 70}ms" data-id="${esc(p.id)}">
     <div class="card__media shoe-frame">
       ${htmlImagem(p, p.corInicial)}
-      <span class="card__tag">${esc(p.categoria)}</span>
+      <span class="card__tag">${esc(etiqueta(p))}</span>
     </div>
     <div class="card__body">
       <div class="card__row">
@@ -242,32 +296,78 @@ function htmlCard(p, i) {
   </a>`;
 }
 
-function htmlNav(ativa) {
+// "Chinelo" (cartões: o sexo só aparece se não for o principal) · "Chinelo · Homem" (completo)
+function etiqueta(p, completo = false) {
+  const mostrarSexo = p.sexo && (completo || p.sexo !== estado.sexos[0]?.nome);
+  return mostrarSexo ? `${p.categoria} · ${p.sexo}` : p.categoria;
+}
+
+function linkFiltro(sexo, cat) {
+  if (sexo && cat) return `#/s/${sexo}/${cat}`;
+  if (sexo) return `#/s/${sexo}`;
+  if (cat) return `#/c/${cat}`;
+  return "#/";
+}
+
+// Topo: Todos · Mulher · Homem · Criança · Categorias ▾ · Contactos
+function htmlNav(r) {
   const links = [
-    `<a href="#/" class="nav__link ${ativa === "todos" ? "is-active" : ""}">Todos</a>`,
-    ...estado.categorias.map(
-      (c) => `<a href="#/c/${c.slug}" class="nav__link ${ativa === c.slug ? "is-active" : ""}">${esc(plural(c.nome))}</a>`
+    `<a href="#/" class="nav__link ${r.nav === "todos" ? "is-active" : ""}">Todos</a>`,
+    ...estado.sexos.map(
+      (x) => `<a href="${linkFiltro(x.slug)}" class="nav__link ${r.sexo === x.slug ? "is-active" : ""}">${esc(x.nome)}</a>`
     ),
-    `<a href="#/contactos" class="nav__link nav__link--contact ${ativa === "contactos" ? "is-active" : ""}">Contactos</a>`,
+    `<button type="button" class="nav__link nav__link--cat ${r.cat ? "is-active" : ""}" id="navCat" aria-expanded="false" aria-controls="subnav">
+      Categorias<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>`,
+    `<a href="#/contactos" class="nav__link nav__link--contact ${r.nav === "contactos" ? "is-active" : ""}">Contactos</a>`,
   ];
   return links.join("");
 }
 
+function htmlSubnav(r) {
+  return `<div class="subnav__inner">${estado.categorias
+    .map((c) => `<a href="${linkFiltro(null, c.slug)}" class="nav__link ${r.cat === c.slug ? "is-active" : ""}">${esc(plural(c.nome))}</a>`)
+    .join("")}</div>`;
+}
+
+function abrirSubnav(abrir) {
+  const sub = $("#subnav");
+  const btn = $("#navCat");
+  if (!sub || !btn) return;
+  abrir = abrir ?? !sub.classList.contains("is-open");
+  sub.classList.toggle("is-open", abrir);
+  topbar.classList.toggle("has-subnav", abrir);
+  btn.setAttribute("aria-expanded", abrir);
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#navCat")) return abrirSubnav();
+  if (!e.target.closest("#subnav")) abrirSubnav(false);
+});
+
 function htmlGrelha(lista) {
-  if (!lista.length) return `<p class="empty">Ainda não há modelos nesta categoria.</p>`;
+  if (!lista.length) return `<p class="empty">Ainda não há modelos aqui.</p>`;
   return `<div class="grid">${lista.map(htmlCard).join("")}</div>`;
 }
 
-function htmlChips(ativa) {
-  return `<div class="chips">
-    <a href="#/" class="chip ${ativa === "todos" ? "is-active" : ""}">Todos <sup>${estado.produtos.length}</sup></a>
-    ${estado.categorias
-      .map(
-        (c) =>
-          `<a href="#/c/${c.slug}" class="chip ${ativa === c.slug ? "is-active" : ""}">${esc(plural(c.nome))} <sup>${c.total}</sup></a>`
-      )
-      .join("")}
-  </div>`;
+// Filtros da grelha: sexo e categoria (cada um mantém o outro escolhido)
+function htmlChips(sexo = null, cat = null) {
+  const conta = (sx, ct) => estado.produtos.filter((p) => (!sx || p.sexoSlug === sx) && (!ct || p.catSlug === ct)).length;
+  const chip = (href, ativo, nome, n) => `<a href="${href}" class="chip ${ativo ? "is-active" : ""}">${esc(nome)} <sup>${n}</sup></a>`;
+  const linhaSexo = estado.sexos.length
+    ? `<div class="chips">
+        ${chip(linkFiltro(null, cat), !sexo, "Todos", conta(null, cat))}
+        ${estado.sexos.filter((x) => conta(x.slug, cat)).map((x) => chip(linkFiltro(x.slug, cat), sexo === x.slug, x.nome, conta(x.slug, cat))).join("")}
+      </div>`
+    : "";
+  const cats = estado.categorias.filter((c) => conta(sexo, c.slug));
+  const linhaCat =
+    cats.length > 1 || cat
+      ? `<div class="chips">
+          ${chip(linkFiltro(sexo, null), !cat, "Todas", conta(sexo, null))}
+          ${cats.map((c) => chip(linkFiltro(sexo, c.slug), cat === c.slug, plural(c.nome), conta(sexo, c.slug))).join("")}
+        </div>`
+      : "";
+  return `<div class="filtros">${linhaSexo}${linhaCat}</div>`;
 }
 
 /* ---------- páginas ---------- */
@@ -282,7 +382,7 @@ function paginaInicio() {
     <div class="hero__floats" aria-hidden="true">
       ${destaque
         .map(
-          (p, i) => `<a class="float float--${i + 1}" href="#/p/${encodeURIComponent(p.ref)}" tabindex="-1" data-depth="${(i % 3) + 1}">
+          (p, i) => `<a class="float float--${i + 1}" href="#/p/${encodeURIComponent(p.id)}" tabindex="-1" data-depth="${(i % 3) + 1}">
             <span class="shoe-frame">${htmlImagem(p, p.corInicial)}</span></a>`
         )
         .join("")}
@@ -310,41 +410,44 @@ function paginaInicio() {
         <p class="eyebrow"><span class="eyebrow__line"></span>${estado.produtos.length} modelos</p>
         <h2 class="section-title">A <em>coleção</em></h2>
       </div>
-      ${htmlChips("todos")}
+      ${htmlChips()}
     </div>
     ${htmlGrelha(estado.produtos)}
   </section>`;
 }
 
-function paginaCategoria(catSlug) {
-  const cat = estado.categorias.find((c) => c.slug === catSlug);
-  if (!cat) return pagina404();
-  const lista = estado.produtos.filter((p) => p.catSlug === catSlug);
+function paginaFiltro(sexoSlug, catSlug) {
+  const sexo = sexoSlug ? estado.sexos.find((x) => x.slug === sexoSlug) : null;
+  const cat = catSlug ? estado.categorias.find((c) => c.slug === catSlug) : null;
+  if ((sexoSlug && !sexo) || (catSlug && !cat)) return pagina404();
+  const lista = estado.produtos.filter((p) => (!sexo || p.sexoSlug === sexo.slug) && (!cat || p.catSlug === cat.slug));
+  const titulo = cat ? plural(cat.nome) : sexo.nome;
+  const extra = cat && sexo ? `${esc(sexo.nome)} · ` : "";
   return `
   <section class="page-head">
-    <p class="eyebrow"><span class="eyebrow__line"></span>${esc(CONFIG.colecao)} · ${lista.length} modelos</p>
-    <h1 class="page-title">${esc(plural(cat.nome))}</h1>
+    <p class="eyebrow"><span class="eyebrow__line"></span>${extra}${esc(CONFIG.colecao)} · ${plur(lista.length, "modelo", "modelos")}</p>
+    <h1 class="page-title">${esc(titulo)}</h1>
   </section>
   <section class="catalog catalog--flush">
-    <div class="catalog__head catalog__head--right">${htmlChips(catSlug)}</div>
+    <div class="catalog__head catalog__head--right">${htmlChips(sexoSlug, catSlug)}</div>
     ${htmlGrelha(lista)}
   </section>`;
 }
 
-function paginaProduto(ref) {
-  const p = estado.produtos.find((x) => x.ref === ref);
+function paginaProduto(id) {
+  const p = produtoPorId(id);
   if (!p) return pagina404();
   const idx = estado.produtos.indexOf(p);
   const ant = estado.produtos[(idx - 1 + estado.produtos.length) % estado.produtos.length];
   const seg = estado.produtos[(idx + 1) % estado.produtos.length];
-  const semelhantes = baralhar(estado.produtos.filter((x) => x.catSlug === p.catSlug && x !== p)).slice(0, 4);
+  const semelhantes = baralhar(estado.produtos.filter((x) => x.catSlug === p.catSlug && x.sexoSlug === p.sexoSlug && x !== p)).slice(0, 4);
 
   const tamanhos = tamanhosDe(p).map((n) => `<span class="size">${esc(n)}</span>`).join("");
 
   return `
-  <section class="product" data-ref="${esc(p.ref)}">
+  <section class="product" data-id="${esc(p.id)}">
     <div class="product__crumbs">
-      <a href="#/">Coleção</a><span>/</span><a href="#/c/${p.catSlug}">${esc(plural(p.categoria))}</a><span>/</span><b>${esc(p.codigo)}</b>
+      <a href="#/">Coleção</a><span>/</span><a href="${linkFiltro(p.sexoSlug, p.catSlug)}">${esc(plural(p.categoria))}${p.sexo ? ` · ${esc(p.sexo)}` : ""}</a><span>/</span><b>${esc(p.codigo)}</b>
     </div>
     <div class="product__grid">
       <div class="product__media">
@@ -355,12 +458,12 @@ function paginaProduto(ref) {
         </div>
       </div>
       <div class="product__info">
-        <p class="eyebrow"><span class="eyebrow__line"></span>${esc(p.categoria)} · ${esc(CONFIG.colecao)}</p>
+        <p class="eyebrow"><span class="eyebrow__line"></span>${esc(etiqueta(p, true))} · ${esc(CONFIG.colecao)}</p>
         <h1 class="product__ref">${esc(p.codigo)}</h1>
         <dl class="specs">
           <div><dt>Referência</dt><dd>${esc(p.codigo)}</dd></div>
           <div><dt>Preço</dt><dd class="mono">${esc(p.precoCodigo)}</dd></div>
-          <div><dt>Categoria</dt><dd>${esc(p.categoria)}</dd></div>
+          <div><dt>Categoria</dt><dd>${esc(etiqueta(p, true))}</dd></div>
           <div><dt>Numeração</dt><dd>${esc(p.numeracao)}</dd></div>
         </dl>
         <div class="block block--cores">
@@ -380,8 +483,8 @@ function paginaProduto(ref) {
         </div>
         <p class="product__nocart" id="noCarrinho"></p>
         <div class="product__pager">
-          <a href="#/p/${encodeURIComponent(ant.ref)}">← ${esc(ant.codigo)}</a>
-          <a href="#/p/${encodeURIComponent(seg.ref)}">${esc(seg.codigo)} →</a>
+          <a href="#/p/${encodeURIComponent(ant.id)}">← ${esc(ant.codigo)}</a>
+          <a href="#/p/${encodeURIComponent(seg.id)}">${esc(seg.codigo)} →</a>
         </div>
       </div>
     </div>
@@ -447,8 +550,8 @@ function ativarReveal() {
   els.forEach((el) => revealObserver.observe(el));
 }
 
-function ativarProduto(ref) {
-  const p = estado.produtos.find((x) => x.ref === ref);
+function ativarProduto(id) {
+  const p = produtoPorId(id);
   const dots = $("#dots");
   if (!p || !dots) return;
   const stage = $("#stage");
@@ -465,9 +568,8 @@ function ativarProduto(ref) {
     stage.classList.remove("is-missing");
     img.classList.add("is-swapping");
     setTimeout(() => {
-      img.dataset.fixa = "1"; // na página do produto, a cor escolhida não troca por outra
       img.alt = `Modelo ${p.codigo} — ${cor}`;
-      trocarFoto(img, p.ref, cor);
+      trocarFoto(img, p, cor);
       const done = () => img.classList.remove("is-swapping");
       if (img.complete) requestAnimationFrame(done);
       else img.addEventListener("load", done, { once: true }), img.addEventListener("error", done, { once: true });
@@ -498,11 +600,11 @@ function ativarProduto(ref) {
 function ativarCards() {
   document.querySelectorAll(".card").forEach((card) => {
     const img = $(".shoe", card);
-    const p = estado.produtos.find((x) => x.ref === card.dataset.ref);
+    const p = produtoPorId(card.dataset.id);
     const escolher = (d) => {
       if (d.classList.contains("is-active")) return;
       card.querySelectorAll(".dot").forEach((x) => x.classList.toggle("is-active", x === d));
-      trocarFoto(img, card.dataset.ref, d.dataset.cor);
+      trocarFoto(img, p, d.dataset.cor);
       if (p) p.corInicial = d.dataset.cor;
     };
     card.addEventListener("pointerover", (e) => {
@@ -545,11 +647,11 @@ function ativarHero() {
 
 /* ---------- carrinho ---------- */
 // Fica guardado no próprio browser de quem encomenda (não precisa de conta). Formato:
-// { itens: { "<ref>": { "<Cor>": { series: { "35-40": 1, "36-41": 2 } } | { pares: { "35": 2, "37": 1 } } } }, nome, notas }
-//   series = quantas séries de cada numeração (ver CONFIG.curvas)
+// { itens: { "<id do modelo>": { "<Cor>": { series: { "35-40": 1, "36-41": 2 } } | { pares: { "35": 2, "37": 1 } } } }, nome, notas }
+//   series = quantas séries de cada numeração (ver o Excel da distribuição)
 //   pares  = números personalizados, com a quantidade de cada número
 const CHAVE_CARRINHO = "mv-carrinho";
-const produtoPorRef = (ref) => estado.produtos.find((p) => p.ref === ref);
+const produtoPorId = (id) => estado.produtos.find((p) => p.id === id);
 
 function intervalo(serie) {
   const m = String(serie).match(/^(\d+)\s*[-–a]\s*(\d+)$/);
@@ -562,7 +664,7 @@ function intervalo(serie) {
 // [["35",1],["36",2],["37",3],["38",3],["39",2],["40",1]]
 function curvaSerie(serie) {
   const t = intervalo(serie);
-  const c = CONFIG.curvas[t.length] || [];
+  const c = estado.curvas[String(serie).trim()] || [];
   return t.map((n, i) => [n, c[i] ?? 1]);
 }
 const paresSerie = (serie) => curvaSerie(serie).reduce((a, [, q]) => a + q, 0);
@@ -578,6 +680,20 @@ function paresLinha(p, l) {
   if (l.series) return Object.entries(l.series).reduce((a, [sr, n]) => a + (+n || 0) * paresSerie(sr), 0);
   return Object.values(l.pares || {}).reduce((a, b) => a + (+b || 0), 0);
 }
+
+// quantos pares de cada número (séries somadas com os personalizados): { "35": 1, "36": 4, ... }
+function contagemLinha(p, l) {
+  const c = {};
+  if (l.series)
+    for (const [sr, n] of Object.entries(l.series)) for (const [t, q] of curvaSerie(sr)) c[t] = (c[t] || 0) + q * (+n || 0);
+  else for (const [t, q] of Object.entries(l.pares || {})) c[t] = (c[t] || 0) + (+q || 0);
+  return c;
+}
+const textoContagem = (p, l, sep = " · ") =>
+  tamanhosDe(p)
+    .filter((t) => contagemLinha(p, l)[t] > 0)
+    .map((t) => `${t}×${contagemLinha(p, l)[t]}`)
+    .join(sep);
 
 // "Série 35-40" · "Série 36-41 × 2" · "35×2 · 36×3"
 function descreverLinha(p, l, sep = " · ") {
@@ -604,7 +720,7 @@ const carrinho = {
       this.itens = {};
       // ignora modelos/cores que entretanto saíram do Excel
       for (const [ref, cores] of Object.entries(d.itens || {})) {
-        const p = produtoPorRef(ref);
+        const p = produtoPorId(ref);
         if (!p) continue;
         const ok = {};
         for (let [cor, l] of Object.entries(cores || {})) {
@@ -638,7 +754,7 @@ const carrinho = {
   totais() {
     let modelos = 0, cores = 0, pares = 0;
     for (const [ref, linhas] of Object.entries(this.itens)) {
-      const p = produtoPorRef(ref);
+      const p = produtoPorId(ref);
       modelos++;
       for (const l of Object.values(linhas)) (cores++, (pares += paresLinha(p, l)));
     }
@@ -706,8 +822,8 @@ const htmlPassos = (k, n, min = 0) => `<span class="step">
 
 function abrirEscolha(p, corDestaque) {
   const tams = tamanhosDe(p);
-  const jaNoCarrinho = !!carrinho.itens[p.ref];
-  const sel = JSON.parse(JSON.stringify(carrinho.itens[p.ref] || {}));
+  const jaNoCarrinho = !!carrinho.itens[p.id];
+  const sel = JSON.parse(JSON.stringify(carrinho.itens[p.id] || {}));
   const novaSerie = (sr = p.series[0]) => ({ series: { [sr]: 1 } });
   // primeira vez: a cor que está a ser vista já vem escolhida com a primeira série
   if (!jaNoCarrinho && corDestaque) sel[corDestaque] = novaSerie();
@@ -756,7 +872,7 @@ function abrirEscolha(p, corDestaque) {
 
   const painel = abrirPainel(
     `<header class="painel__topo">
-      <div><p class="eyebrow">${esc(p.categoria)} · ${plur(p.cores.length, "cor", "cores")}</p><h2 class="painel__titulo">${esc(p.codigo)}</h2></div>
+      <div><p class="eyebrow">${esc(etiqueta(p, true))} · ${plur(p.cores.length, "cor", "cores")}</p><h2 class="painel__titulo">${esc(p.codigo)}</h2></div>
       <button type="button" class="painel__x" data-fechar aria-label="Fechar">×</button>
     </header>
     <div class="painel__corpo">
@@ -836,7 +952,7 @@ function abrirEscolha(p, corDestaque) {
         const soPositivos = (o) => Object.fromEntries(Object.entries(o).filter(([, q]) => q > 0));
         final[c] = l.series ? { series: soPositivos(l.series) } : { pares: soPositivos(l.pares) };
       }
-      carrinho.definir(p.ref, final);
+      carrinho.definir(p.id, final);
       fecharPainel();
       aviso(
         Object.keys(final).length
@@ -852,8 +968,8 @@ function abrirEscolha(p, corDestaque) {
 // Na página do modelo: diz o que já está no carrinho
 function atualizarBotaoProduto(p) {
   const txt = $("#addCarrinhoTxt");
-  if (!txt || $("#stage")?.closest(".product")?.dataset.ref !== p.ref) return;
-  const linhas = carrinho.itens[p.ref];
+  if (!txt || $("#stage")?.closest(".product")?.dataset.id !== p.id) return;
+  const linhas = carrinho.itens[p.id];
   txt.textContent = linhas ? "Alterar no carrinho" : "Adicionar ao carrinho";
   const n = linhas ? Object.values(linhas).reduce((a, l) => a + paresLinha(p, l), 0) : 0;
   $("#noCarrinho").innerHTML = linhas
@@ -863,17 +979,17 @@ function atualizarBotaoProduto(p) {
 
 /* ---------- página do carrinho ---------- */
 function htmlItemCarrinho(ref) {
-  const p = produtoPorRef(ref);
+  const p = produtoPorId(ref);
   const linhas = Object.entries(carrinho.itens[ref]);
   const n = linhas.reduce((a, [, l]) => a + paresLinha(p, l), 0);
-  return `<article class="citem" data-ref="${esc(ref)}">
+  return `<article class="citem" data-id="${esc(ref)}">
     <a class="citem__foto shoe-frame" href="#/p/${encodeURIComponent(ref)}">${htmlImagem(p, linhas[0][0])}</a>
     <div class="citem__info">
       <div class="citem__topo">
         <a class="citem__ref" href="#/p/${encodeURIComponent(ref)}">${esc(p.codigo)}</a>
         <span class="card__price">${esc(p.precoCodigo)}</span>
       </div>
-      <p class="citem__cat">${esc(p.categoria)} · ${plur(n, "par", "pares")}</p>
+      <p class="citem__cat">${esc(etiqueta(p, true))} · ${plur(n, "par", "pares")}</p>
       <ul class="citem__linhas">
         ${linhas
           .map(
@@ -881,7 +997,9 @@ function htmlItemCarrinho(ref) {
               <span class="dot dot--static" style="--sw:${corSwatch(cor)}"></span>
               <b>${esc(cor)}</b>
               <span class="citem__pares">${plur(paresLinha(p, l), "par", "pares")}</span>
-              <span class="citem__desc">${esc(descreverLinha(p, l))}</span>
+              <span class="citem__desc">${esc(descreverLinha(p, l))}${
+                l.series ? `<span class="citem__conta">${esc(textoContagem(p, l))}</span>` : ""
+              }</span>
             </li>`
           )
           .join("")}
@@ -947,10 +1065,10 @@ function ativarCarrinho() {
   $(".cart__lista", app)?.addEventListener("click", (e) => {
     const item = e.target.closest(".citem");
     if (!item) return;
-    const p = produtoPorRef(item.dataset.ref);
+    const p = produtoPorId(item.dataset.id);
     if (e.target.closest("[data-editar]")) abrirEscolha(p);
     if (e.target.closest("[data-remover]")) {
-      carrinho.definir(p.ref, {});
+      carrinho.definir(p.id, {});
       redesenharCarrinho();
       aviso(`<span>${esc(p.codigo)} saiu do carrinho</span>`);
     }
@@ -971,10 +1089,11 @@ function carregarImagem(src) {
 async function fotoModelo(p, preferidas) {
   const ordem = [...preferidas, ...p.cores.filter((c) => !preferidas.includes(c))];
   for (const cor of ordem)
-    for (const f of ["png", "mini", "PNG"]) {
-      const im = await carregarImagem(caminhoFoto(p.ref, cor, f));
-      if (im) return im;
-    }
+    for (const ref of p.fotos)
+      for (const f of ["png", "mini", "PNG"]) {
+        const im = await carregarImagem(caminhoFoto(ref, cor, f));
+        if (im) return im;
+      }
   return null;
 }
 
@@ -1006,7 +1125,7 @@ async function imagemEncomenda() {
   const fontes = ['400 40px "Instrument Serif"', 'italic 400 40px "Instrument Serif"', "500 20px Manrope", "600 20px Manrope"];
   await Promise.all(fontes.map((f) => document.fonts?.load(f).catch(() => {})));
   const refs = Object.keys(carrinho.itens);
-  const fotos = await Promise.all(refs.map((ref) => fotoModelo(produtoPorRef(ref), Object.keys(carrinho.itens[ref]))));
+  const fotos = await Promise.all(refs.map((ref) => fotoModelo(produtoPorId(ref), Object.keys(carrinho.itens[ref]))));
 
   const COR = { fundo: "#fffef7", areia: "#f6f0e3", escuro: "#664b32", castanho: "#8f6946", tinta: "#2f2318", suave: "#8a7766", linha: "rgba(102,75,50,0.18)" };
   const SERIF = '"Instrument Serif", "Times New Roman", serif';
@@ -1018,14 +1137,15 @@ async function imagemEncomenda() {
 
   // 1.º passo: medir cada modelo
   const blocos = refs.map((ref, i) => {
-    const p = produtoPorRef(ref);
+    const p = produtoPorId(ref);
     ctx.font = `500 23px ${SANS}`;
     const linhas = Object.entries(carrinho.itens[ref]).map(([cor, l]) => ({
       cor,
       pares: paresLinha(p, l),
       desc: quebrarTexto(ctx, descreverLinha(p, l), LARG - 34),
+      conta: l.series ? quebrarTexto(ctx, textoContagem(p, l), LARG - 34) : [],
     }));
-    const altTexto = 60 + 40 + linhas.reduce((a, l) => a + 38 + l.desc.length * 32 + 14, 0);
+    const altTexto = 60 + 40 + linhas.reduce((a, l) => a + 38 + (l.desc.length + l.conta.length) * 32 + 14, 0);
     return { p, foto: fotos[i], linhas, alt: Math.max(FOTO, altTexto) + 56 };
   });
   ctx.font = `500 24px ${SANS}`;
@@ -1108,7 +1228,7 @@ async function imagemEncomenda() {
     ty += 40;
     ctx.font = `600 17px ${SANS}`;
     ctx.fillStyle = COR.suave;
-    ctx.fillText(b.p.categoria.toUpperCase(), X, ty);
+    ctx.fillText(etiqueta(b.p, true).toUpperCase(), X, ty);
     ty += 22;
     // cores
     for (const l of b.linhas) {
@@ -1137,6 +1257,11 @@ async function imagemEncomenda() {
       ctx.font = `500 23px ${SANS}`;
       ctx.fillStyle = COR.suave;
       for (const linha of l.desc) {
+        ty += 32;
+        ctx.fillText(linha, X + 34, ty);
+      }
+      ctx.fillStyle = COR.tinta;
+      for (const linha of l.conta) {
         ty += 32;
         ctx.fillText(linha, X + 34, ty);
       }
@@ -1242,9 +1367,13 @@ async function prepararEncomenda() {
 /* ---------- router ---------- */
 function rota() {
   const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
-  const [tipo, val] = h.split("/");
-  if (tipo === "c" && val) return { nome: "categoria", val, nav: val };
-  if (tipo === "p" && val) return { nome: "produto", val, nav: estado.produtos.find((p) => p.ref === val)?.catSlug };
+  const [tipo, val, val2] = h.split("/");
+  if (tipo === "c" && val) return { nome: "filtro", cat: val, nav: "filtro" };
+  if (tipo === "s" && val) return { nome: "filtro", sexo: val, cat: val2 || null, nav: "filtro" };
+  if (tipo === "p" && val) {
+    const p = produtoPorId(val);
+    return { nome: "produto", val, nav: "produto", sexo: p?.sexoSlug, cat: p?.catSlug };
+  }
   if (tipo === "contactos") return { nome: "contactos", nav: "contactos" };
   if (tipo === "carrinho") return { nome: "carrinho", nav: "carrinho" };
   if (tipo === "" || tipo === "colecao") return { nome: "inicio", nav: "todos" };
@@ -1258,28 +1387,30 @@ function render() {
   const r = rota();
   const app = $("#app");
 
-  $("#nav").innerHTML = htmlNav(r.nav);
+  $("#nav").innerHTML = htmlNav(r);
+  $("#subnav").innerHTML = htmlSubnav(r);
+  abrirSubnav(false);
   document.body.dataset.page = r.nome;
 
   app.classList.remove("is-entering");
   void app.offsetWidth;
   app.innerHTML =
     r.nome === "inicio" ? paginaInicio() :
-    r.nome === "categoria" ? paginaCategoria(r.val) :
+    r.nome === "filtro" ? paginaFiltro(r.sexo, r.cat) :
     r.nome === "produto" ? paginaProduto(r.val) :
     r.nome === "contactos" ? paginaContactos() :
     r.nome === "carrinho" ? paginaCarrinho() : pagina404();
   app.classList.add("is-entering");
 
-  // ao voltar de uma categoria para "Todos", salta diretamente para a grelha
+  // ao voltar de um filtro para "Todos", salta diretamente para a grelha
   const colecao = $("#colecao");
-  const top = ultimaRota?.nome === "categoria" && r.nome === "inicio" && colecao ? colecao.offsetTop - 60 : 0;
+  const top = ultimaRota?.nome === "filtro" && r.nome === "inicio" && colecao ? colecao.offsetTop - 60 : 0;
   window.scrollTo({ top, behavior: "instant" });
 
   const titulos = {
     inicio: `${CONFIG.empresa.nome} — ${CONFIG.colecao}`,
-    categoria: `${plural(estado.categorias.find((c) => c.slug === r.val)?.nome || "")} — ${CONFIG.empresa.nome}`,
-    produto: `${estado.produtos.find((p) => p.ref === r.val)?.codigo || ""} — ${CONFIG.empresa.nome}`,
+    filtro: `${[estado.sexos.find((x) => x.slug === r.sexo)?.nome, r.cat && plural(estado.categorias.find((c) => c.slug === r.cat)?.nome || "")].filter(Boolean).join(" · ")} — ${CONFIG.empresa.nome}`,
+    produto: `${produtoPorId(r.val)?.codigo || ""} — ${CONFIG.empresa.nome}`,
     contactos: `Contactos — ${CONFIG.empresa.nome}`,
     carrinho: `Carrinho — ${CONFIG.empresa.nome}`,
   };
