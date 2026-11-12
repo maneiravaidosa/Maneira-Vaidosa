@@ -296,10 +296,9 @@ function htmlCard(p, i) {
   </a>`;
 }
 
-// "Chinelo" (cartões: o sexo só aparece se não for o principal) · "Chinelo · Homem" (completo)
-function etiqueta(p, completo = false) {
-  const mostrarSexo = p.sexo && (completo || p.sexo !== estado.sexos[0]?.nome);
-  return mostrarSexo ? `${p.categoria} · ${p.sexo}` : p.categoria;
+// "Chinelo · Mulher" · "Chinelo · Homem" (só a categoria se o modelo não tiver sexo no Excel)
+function etiqueta(p) {
+  return p.sexo ? `${p.categoria} · ${p.sexo}` : p.categoria;
 }
 
 function linkFiltro(sexo, cat) {
@@ -458,12 +457,12 @@ function paginaProduto(id) {
         </div>
       </div>
       <div class="product__info">
-        <p class="eyebrow"><span class="eyebrow__line"></span>${esc(etiqueta(p, true))} · ${esc(CONFIG.colecao)}</p>
+        <p class="eyebrow"><span class="eyebrow__line"></span>${esc(etiqueta(p))} · ${esc(CONFIG.colecao)}</p>
         <h1 class="product__ref">${esc(p.codigo)}</h1>
         <dl class="specs">
           <div><dt>Referência</dt><dd>${esc(p.codigo)}</dd></div>
           <div><dt>Preço</dt><dd class="mono">${esc(p.precoCodigo)}</dd></div>
-          <div><dt>Categoria</dt><dd>${esc(etiqueta(p, true))}</dd></div>
+          <div><dt>Categoria</dt><dd>${esc(etiqueta(p))}</dd></div>
           <div><dt>Numeração</dt><dd>${esc(p.numeracao)}</dd></div>
         </dl>
         <div class="block block--cores">
@@ -872,7 +871,7 @@ function abrirEscolha(p, corDestaque) {
 
   const painel = abrirPainel(
     `<header class="painel__topo">
-      <div><p class="eyebrow">${esc(etiqueta(p, true))} · ${plur(p.cores.length, "cor", "cores")}</p><h2 class="painel__titulo">${esc(p.codigo)}</h2></div>
+      <div><p class="eyebrow">${esc(etiqueta(p))} · ${plur(p.cores.length, "cor", "cores")}</p><h2 class="painel__titulo">${esc(p.codigo)}</h2></div>
       <button type="button" class="painel__x" data-fechar aria-label="Fechar">×</button>
     </header>
     <div class="painel__corpo">
@@ -989,7 +988,7 @@ function htmlItemCarrinho(ref) {
         <a class="citem__ref" href="#/p/${encodeURIComponent(ref)}">${esc(p.codigo)}</a>
         <span class="card__price">${esc(p.precoCodigo)}</span>
       </div>
-      <p class="citem__cat">${esc(etiqueta(p, true))} · ${plur(n, "par", "pares")}</p>
+      <p class="citem__cat">${esc(etiqueta(p))} · ${plur(n, "par", "pares")}</p>
       <ul class="citem__linhas">
         ${linhas
           .map(
@@ -1228,7 +1227,7 @@ async function imagemEncomenda() {
     ty += 40;
     ctx.font = `600 17px ${SANS}`;
     ctx.fillStyle = COR.suave;
-    ctx.fillText(etiqueta(b.p, true).toUpperCase(), X, ty);
+    ctx.fillText(etiqueta(b.p).toUpperCase(), X, ty);
     ty += 22;
     // cores
     for (const l of b.linhas) {
