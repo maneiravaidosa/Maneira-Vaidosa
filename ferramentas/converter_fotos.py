@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageChops, ImageFilter, ImageOps
 
 RAIZ = Path(__file__).resolve().parent.parent
 ORIGEM = RAIZ / "fotos originais"
@@ -33,7 +33,7 @@ EXTENSOES = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 # Modelo de recorte usado por omissão e exceções por referência.
 # O "isnet-general-use" funciona bem na maioria das fotos, mas nos chinelos de sola de cortiça
 # deixa a sombra do chão como um "nevoeiro" por baixo da sola; para esses usa-se o "u2net"
-# e as arestas são endurecidas (a sola escura pousada na sua sombra fica esbatida sem isso).
+# e recupera-se a sola preta pela cor (o recorte confunde-a com a sombra e corta-a).
 MODELO = "isnet-general-use"
 MODELO_POR_REF = {
     "1128": "u2net",
@@ -51,11 +51,18 @@ def nome_destino(ficheiro: Path):
     return m.group(1), m.group(2).lower()
 
 
-def endurecer(img: Image.Image, baixo=70, alto=190) -> Image.Image:
-    """Arestas nítidas: o que o recorte acha "quase de certeza sapato" fica opaco, o "quase fundo" desaparece."""
-    a = img.getchannel("A").point(lambda v: 0 if v <= baixo else 255 if v >= alto else int((v - baixo) * 255 / (alto - baixo)))
-    img.putalpha(a)
-    return img
+def recuperar_sola(original: Image.Image, cortada: Image.Image) -> Image.Image:
+    """Volta a juntar a sola escura que o recorte cortou.
+
+    Os píxeis muito escuros da foto original, colados ao sapato, são sola (a sombra do chão é mais clara);
+    depois as arestas ficam nítidas: o "quase sapato" fica opaco e o "quase fundo" (nevoeiro) desaparece."""
+    a = cortada.getchannel("A")
+    perto = a.point(lambda v: 255 if v > 128 else 0).filter(ImageFilter.MaxFilter(41))
+    escuro = original.convert("L").point(lambda v: 255 if v < 75 else 0)
+    m = ImageChops.lighter(a, ImageChops.multiply(escuro, perto)).filter(ImageFilter.MedianFilter(5))
+    m = m.point(lambda v: 0 if v <= 70 else 255 if v >= 190 else int((v - 70) * 255 / 120))
+    cortada.putalpha(m.filter(ImageFilter.GaussianBlur(0.8)))
+    return cortada
 
 
 def recortar(img: Image.Image) -> Image.Image:
@@ -113,7 +120,7 @@ def main():
         img.thumbnail((ENTRADA_MAX, ENTRADA_MAX), Image.LANCZOS)
         cortada = remove(img, session=sessao)
         if ref in MODELO_POR_REF:
-            cortada = endurecer(cortada)
+            cortada = recuperar_sola(img, cortada)
         img = recortar(cortada)
         img.thumbnail((LARGURA_MAX, LARGURA_MAX), Image.LANCZOS)
         saida.parent.mkdir(parents=True, exist_ok=True)
