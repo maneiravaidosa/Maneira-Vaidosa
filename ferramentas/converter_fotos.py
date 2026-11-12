@@ -32,7 +32,8 @@ EXTENSOES = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 
 # Modelo de recorte usado por omissão e exceções por referência.
 # O "isnet-general-use" funciona bem na maioria das fotos, mas nos chinelos de sola de cortiça
-# deixa a sombra do chão como um "nevoeiro" por baixo da sola; para esses usa-se o "u2net".
+# deixa a sombra do chão como um "nevoeiro" por baixo da sola; para esses usa-se o "u2net"
+# e as arestas são endurecidas (a sola escura pousada na sua sombra fica esbatida sem isso).
 MODELO = "isnet-general-use"
 MODELO_POR_REF = {
     "1128": "u2net",
@@ -48,6 +49,13 @@ def nome_destino(ficheiro: Path):
     if not m:
         return None
     return m.group(1), m.group(2).lower()
+
+
+def endurecer(img: Image.Image, baixo=70, alto=190) -> Image.Image:
+    """Arestas nítidas: o que o recorte acha "quase de certeza sapato" fica opaco, o "quase fundo" desaparece."""
+    a = img.getchannel("A").point(lambda v: 0 if v <= baixo else 255 if v >= alto else int((v - baixo) * 255 / (alto - baixo)))
+    img.putalpha(a)
+    return img
 
 
 def recortar(img: Image.Image) -> Image.Image:
@@ -103,7 +111,10 @@ def main():
         sessao = sessoes[modelo]
         img = ImageOps.exif_transpose(Image.open(f)).convert("RGB")
         img.thumbnail((ENTRADA_MAX, ENTRADA_MAX), Image.LANCZOS)
-        img = recortar(remove(img, session=sessao))
+        cortada = remove(img, session=sessao)
+        if ref in MODELO_POR_REF:
+            cortada = endurecer(cortada)
+        img = recortar(cortada)
         img.thumbnail((LARGURA_MAX, LARGURA_MAX), Image.LANCZOS)
         saida.parent.mkdir(parents=True, exist_ok=True)
         img.save(saida, optimize=True)
