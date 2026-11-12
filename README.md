@@ -54,9 +54,10 @@ python3 ferramentas/converter_fotos.py
 - Demora cerca de 5 segundos por foto. Da primeira vez descarrega o modelo de recorte (~180 MB), por isso demora mais.
 - No fim aparece `Convertidas: X`. Cada foto dá origem a dois ficheiros na pasta `png/<referência>/`:
   a foto grande (`.png`) e uma miniatura leve (`mini/....webp`) usada na página inicial.
-- Se uma foto ficar com "nevoeiro" (a sombra do chão) por baixo da sola, acrescente a referência a
-  `MODELO_POR_REF` no início de `ferramentas/converter_fotos.py` (usa o modelo `u2net`, melhor para solas de cortiça)
-  e volte a converter essa referência: `python3 ferramentas/converter_fotos.py --ref 1128`
+- Modelos com **sola de borracha preta** (ex.: 1128, 2072, 2703, 3521): o recorte confunde a sola com a sombra
+  e corta-a ou deixa "nevoeiro". Para um modelo novo com esse tipo de sola, acrescente a referência a
+  `MODELO_POR_REF` no início de `ferramentas/converter_fotos.py` e volte a converter essa referência:
+  `python3 ferramentas/converter_fotos.py --ref 1128` (usa outro modelo de recorte e recupera a sola preta pela cor).
 - Se uma foto ficar mal recortada, pode voltar a convertê-la sozinha:
 
   ```bash
