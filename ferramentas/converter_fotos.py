@@ -10,6 +10,7 @@ Uso (na pasta do projeto):
     python ferramentas/converter_fotos.py           # só converte fotos novas ou alteradas
     python ferramentas/converter_fotos.py --todas   # volta a converter tudo
     python ferramentas/converter_fotos.py 20_castanho.jpg   # volta a converter só essa foto
+    python ferramentas/converter_fotos.py --ref 1128         # volta a converter todas as fotos dessa referência
 
 Da primeira vez, o rembg descarrega automaticamente o modelo de recorte (~180 MB).
 """
@@ -28,6 +29,17 @@ LARGURA_MINI = 520   # px da miniatura usada na grelha
 ENTRADA_MAX = 2400   # px da foto enviada ao recorte
 MARGEM = 0.04        # margem transparente à volta do sapato
 EXTENSOES = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+
+# Modelo de recorte usado por omissão e exceções por referência.
+# O "isnet-general-use" funciona bem na maioria das fotos, mas nos chinelos de sola de cortiça
+# deixa a sombra do chão como um "nevoeiro" por baixo da sola; para esses usa-se o "u2net".
+MODELO = "isnet-general-use"
+MODELO_POR_REF = {
+    "1128": "u2net",
+    "2703": "u2net",
+    "3521": "u2net",
+    "3521C": "u2net",
+}
 
 
 def nome_destino(ficheiro: Path):
@@ -63,15 +75,17 @@ def recortar(img: Image.Image) -> Image.Image:
 def main():
     todas = "--todas" in sys.argv
     # nomes de ficheiros específicos podem ser passados como argumentos (ex: 20_castanho.jpg)
-    escolhidas = {a for a in sys.argv[1:] if not a.startswith("--")}
+    args = sys.argv[1:]
+    refs = {args[i + 1] for i, a in enumerate(args[:-1]) if a == "--ref"}
+    escolhidas = {a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] != "--ref")}
     os.environ.setdefault("OMP_NUM_THREADS", "4")
     from rembg import new_session, remove
 
     ficheiros = sorted(f for f in ORIGEM.iterdir() if f.suffix.lower() in EXTENSOES)
-    if escolhidas:
-        ficheiros = [f for f in ficheiros if f.name in escolhidas]
+    if escolhidas or refs:
+        ficheiros = [f for f in ficheiros if f.name in escolhidas or (nome_destino(f) or ("",))[0] in refs]
         todas = True
-    sessao = None
+    sessoes = {}
     feitos = ignorados = 0
     for f in ficheiros:
         alvo = nome_destino(f)
@@ -83,8 +97,10 @@ def main():
         if not todas and saida.exists() and saida.stat().st_mtime >= f.stat().st_mtime:
             ignorados += 1
             continue
-        if sessao is None:
-            sessao = new_session("isnet-general-use")
+        modelo = MODELO_POR_REF.get(ref, MODELO)
+        if modelo not in sessoes:
+            sessoes[modelo] = new_session(modelo)
+        sessao = sessoes[modelo]
         img = ImageOps.exif_transpose(Image.open(f)).convert("RGB")
         img.thumbnail((ENTRADA_MAX, ENTRADA_MAX), Image.LANCZOS)
         img = recortar(remove(img, session=sessao))
