@@ -41,6 +41,8 @@ MODELO_POR_REF = {
     "2703": "u2net",
     "3521": "u2net",
     "3521C": "u2net",
+    # partes brancas encostadas à parede branca (ex.: ponta da correia): junta os dois recortes
+    "2060": "isnet-general-use+u2net",
 }
 
 
@@ -70,6 +72,19 @@ def recuperar_sola(original: Image.Image, cortada: Image.Image, escuro_max=70, p
     m = m.point(lambda v: 0 if v <= 70 else 255 if v >= 190 else int((v - 70) * 255 / 120))
     cortada.putalpha(m.filter(ImageFilter.GaussianBlur(0.8)))
     return cortada
+
+
+def juntar_recortes(original: Image.Image, recortes) -> Image.Image:
+    """Junta vários recortes: fica sapato o que qualquer um deles achar que é sapato.
+
+    Útil quando uma parte branca do sapato está à frente da parede branca e um dos recortes a "rói"."""
+    a = recortes[0].getchannel("A")
+    for r in recortes[1:]:
+        a = ImageChops.lighter(a, r.getchannel("A"))
+    a = a.point(lambda v: 0 if v <= 70 else 255 if v >= 190 else int((v - 70) * 255 / 120))
+    resultado = original.convert("RGBA")
+    resultado.putalpha(a.filter(ImageFilter.GaussianBlur(0.8)))
+    return resultado
 
 
 def recortar(img: Image.Image) -> Image.Image:
@@ -120,14 +135,17 @@ def main():
             ignorados += 1
             continue
         modelo = MODELO_POR_REF.get(ref, MODELO)
-        if modelo not in sessoes:
-            sessoes[modelo] = new_session(modelo)
-        sessao = sessoes[modelo]
+        for m in modelo.split("+"):
+            if m not in sessoes:
+                sessoes[m] = new_session(m)
         img = ImageOps.exif_transpose(Image.open(f)).convert("RGB")
         img.thumbnail((ENTRADA_MAX, ENTRADA_MAX), Image.LANCZOS)
-        cortada = remove(img, session=sessao)
-        if ref in MODELO_POR_REF:
-            cortada = recuperar_sola(img, cortada)
+        if "+" in modelo:
+            cortada = juntar_recortes(img, [remove(img, session=sessoes[m]) for m in modelo.split("+")])
+        else:
+            cortada = remove(img, session=sessoes[modelo])
+            if modelo != MODELO:
+                cortada = recuperar_sola(img, cortada)
         img = recortar(cortada)
         img.thumbnail((LARGURA_MAX, LARGURA_MAX), Image.LANCZOS)
         saida.parent.mkdir(parents=True, exist_ok=True)
