@@ -58,6 +58,9 @@ python3 ferramentas/converter_fotos.py
   e corta-a ou deixa "nevoeiro". Para um modelo novo com esse tipo de sola, acrescente a referência a
   `MODELO_POR_REF` no início de `ferramentas/converter_fotos.py` e volte a converter essa referência:
   `python3 ferramentas/converter_fotos.py --ref 1128` (usa outro modelo de recorte e recupera a sola preta pela cor).
+- Se o recorte automático não ficar bem, pode tirar o fundo à mão e pôr o PNG transparente na pasta
+  `fotos prontas`, com o mesmo nome (ex.: `2060_branco.png`, sapato deitado com o bico para a direita).
+  O conversor passa a usar essa foto em vez de tirar o fundo à original.
 - Se uma foto ficar mal recortada, pode voltar a convertê-la sozinha:
 
   ```bash
