@@ -23,6 +23,9 @@ from PIL import Image, ImageChops, ImageFilter, ImageOps
 
 RAIZ = Path(__file__).resolve().parent.parent
 ORIGEM = RAIZ / "fotos originais"
+# Fotos a que já se tirou o fundo à mão (PNG transparente, mesmo nome: 2060_branco.png).
+# Se existir aqui, é usada em vez de tirar o fundo automaticamente à foto original.
+PRONTAS = RAIZ / "fotos prontas"
 DESTINO = RAIZ / "png"
 LARGURA_MAX = 1000   # px do PNG final (lado maior)
 LARGURA_MINI = 520   # px da miniatura usada na grelha
@@ -109,6 +112,17 @@ def recortar(img: Image.Image) -> Image.Image:
     return tela
 
 
+def guardar(img: Image.Image, ref: str, cor: str, saida: Path):
+    """Grava a foto grande (PNG) e a miniatura leve (WebP) usada na grelha."""
+    saida.parent.mkdir(parents=True, exist_ok=True)
+    img.save(saida, optimize=True)
+    mini = DESTINO / ref / "mini" / f"{ref} {cor}.webp"
+    mini.parent.mkdir(parents=True, exist_ok=True)
+    pequena = img.copy()
+    pequena.thumbnail((LARGURA_MINI, LARGURA_MINI), Image.LANCZOS)
+    pequena.save(mini, quality=86, method=6)
+
+
 def main():
     todas = "--todas" in sys.argv
     # nomes de ficheiros específicos podem ser passados como argumentos (ex: 20_castanho.jpg)
@@ -119,6 +133,10 @@ def main():
     from rembg import new_session, remove
 
     ficheiros = sorted(f for f in ORIGEM.iterdir() if f.suffix.lower() in EXTENSOES)
+    prontas = {f.stem.lower(): f for f in PRONTAS.iterdir() if f.suffix.lower() == ".png"} if PRONTAS.exists() else {}
+    # fotos prontas sem original também entram
+    nomes = {f.stem.lower() for f in ficheiros}
+    ficheiros += sorted(f for k, f in prontas.items() if k not in nomes)
     if escolhidas or refs:
         ficheiros = [f for f in ficheiros if f.name in escolhidas or (nome_destino(f) or ("",))[0] in refs]
         todas = True
@@ -131,13 +149,22 @@ def main():
             continue
         ref, cor = alvo
         saida = DESTINO / ref / f"{ref} {cor}.png"
-        if not todas and saida.exists() and saida.stat().st_mtime >= f.stat().st_mtime:
+        pronta = prontas.get(f.stem.lower())
+        fonte = pronta or f
+        if not todas and saida.exists() and saida.stat().st_mtime >= fonte.stat().st_mtime:
             ignorados += 1
             continue
         modelo = MODELO_POR_REF.get(ref, MODELO)
         for m in modelo.split("+"):
             if m not in sessoes:
                 sessoes[m] = new_session(m)
+        if pronta:
+            img = recortar(Image.open(pronta).convert("RGBA"))
+            img.thumbnail((LARGURA_MAX, LARGURA_MAX), Image.LANCZOS)
+            guardar(img, ref, cor, saida)
+            feitos += 1
+            print(f"  ✓ {pronta.name} (fundo tirado à mão) -> {saida.relative_to(RAIZ)}")
+            continue
         img = ImageOps.exif_transpose(Image.open(f)).convert("RGB")
         img.thumbnail((ENTRADA_MAX, ENTRADA_MAX), Image.LANCZOS)
         if "+" in modelo:
@@ -148,13 +175,7 @@ def main():
                 cortada = recuperar_sola(img, cortada)
         img = recortar(cortada)
         img.thumbnail((LARGURA_MAX, LARGURA_MAX), Image.LANCZOS)
-        saida.parent.mkdir(parents=True, exist_ok=True)
-        img.save(saida, optimize=True)
-        mini = DESTINO / ref / "mini" / f"{ref} {cor}.webp"
-        mini.parent.mkdir(parents=True, exist_ok=True)
-        pequena = img.copy()
-        pequena.thumbnail((LARGURA_MINI, LARGURA_MINI), Image.LANCZOS)
-        pequena.save(mini, quality=86, method=6)
+        guardar(img, ref, cor, saida)
         feitos += 1
         print(f"  ✓ {f.name} -> {saida.relative_to(RAIZ)}")
     print(f"\nConvertidas: {feitos} · já estavam feitas: {ignorados}")
