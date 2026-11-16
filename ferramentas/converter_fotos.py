@@ -46,6 +46,10 @@ MODELO_POR_REF = {
     "3521C": "u2net",
     # partes brancas encostadas à parede branca (ex.: ponta da correia): junta os dois recortes
     "2060": "isnet-general-use+u2net",
+    "271": "isnet-general-use+u2net",
+    "274": "isnet-general-use+u2net",
+    "277": "isnet-general-use+u2net",
+    "279": "isnet-general-use+u2net",
 }
 
 
